@@ -1,0 +1,724 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --font-display: "Arial Black", "Helvetica Neue", sans-serif;
+  --font-body: "Arial", "Helvetica Neue", sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-cinema: var(--cinema);
+  --color-panel: var(--panel);
+  --color-panel-strong: var(--panel-strong);
+  --color-red: var(--red);
+  --color-gold: var(--gold);
+  --color-cream: var(--cream);
+  --color-success: var(--success);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.095 0.004 30);
+  --foreground: oklch(0.94 0.007 75);
+  --card: oklch(0.14 0.006 30);
+  --card-foreground: oklch(0.94 0.007 75);
+  --popover: oklch(0.14 0.006 30);
+  --popover-foreground: oklch(0.94 0.007 75);
+  --primary: oklch(0.62 0.23 28);
+  --primary-foreground: oklch(0.99 0.002 95);
+  --secondary: oklch(0.17 0.006 30);
+  --secondary-foreground: oklch(0.94 0.007 75);
+  --muted: oklch(0.17 0.006 30);
+  --muted-foreground: oklch(0.67 0.013 55);
+  --accent: oklch(0.21 0.01 35);
+  --accent-foreground: oklch(0.94 0.007 75);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.984 0.003 247.858);
+  --border: oklch(0.28 0.009 35);
+  --input: oklch(0.22 0.007 30);
+  --ring: oklch(0.72 0.15 75);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.14 0.006 30);
+  --sidebar-foreground: oklch(0.94 0.007 75);
+  --sidebar-primary: oklch(0.62 0.23 28);
+  --sidebar-primary-foreground: oklch(0.99 0.002 95);
+  --sidebar-accent: oklch(0.21 0.01 35);
+  --sidebar-accent-foreground: oklch(0.94 0.007 75);
+  --sidebar-border: oklch(0.28 0.009 35);
+  --sidebar-ring: oklch(0.72 0.15 75);
+  --cinema: oklch(0.095 0.004 30);
+  --panel: oklch(0.14 0.006 30);
+  --panel-strong: oklch(0.19 0.008 30);
+  --red: oklch(0.62 0.23 28);
+  --gold: oklch(0.78 0.15 80);
+  --cream: oklch(0.94 0.007 75);
+  --success: oklch(0.72 0.16 150);
+}
+
+.dark {
+  --background: oklch(0.129 0.042 264.695);
+  --foreground: oklch(0.984 0.003 247.858);
+  --card: oklch(0.208 0.042 265.755);
+  --card-foreground: oklch(0.984 0.003 247.858);
+  --popover: oklch(0.208 0.042 265.755);
+  --popover-foreground: oklch(0.984 0.003 247.858);
+  --primary: oklch(0.929 0.013 255.508);
+  --primary-foreground: oklch(0.208 0.042 265.755);
+  --secondary: oklch(0.279 0.041 260.031);
+  --secondary-foreground: oklch(0.984 0.003 247.858);
+  --muted: oklch(0.279 0.041 260.031);
+  --muted-foreground: oklch(0.704 0.04 256.788);
+  --accent: oklch(0.279 0.041 260.031);
+  --accent-foreground: oklch(0.984 0.003 247.858);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.984 0.003 247.858);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.551 0.027 264.364);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.208 0.042 265.755);
+  --sidebar-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-accent: oklch(0.279 0.041 260.031);
+  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.551 0.027 264.364);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-body);
+  }
+}
+
+@utility brand {
+  @apply inline-flex items-center gap-2 font-black text-[1.5rem] text-cream;
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+@utility btn {
+  @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-md px-7 py-3 text-base font-black uppercase transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+}
+@utility btn-primary {
+  @apply bg-red text-primary-foreground hover:bg-red/85;
+}
+@utility btn-secondary {
+  @apply border border-border bg-panel text-cream hover:bg-accent;
+}
+@utility btn-full {
+  @apply w-full;
+}
+
+.site-header {
+  @apply flex h-20 items-center justify-between border-b border-border bg-panel px-6 sm:px-8;
+}
+.header-actions {
+  @apply flex items-center gap-5 text-gold;
+}
+.header-icon {
+  @apply grid h-9 w-9 place-items-center;
+}
+.header-avatar,
+.avatar {
+  @apply grid h-10 w-10 shrink-0 place-items-center rounded-full border border-gold/50 bg-cinema text-sm font-black text-gold;
+}
+.game-app {
+  @apply min-h-screen bg-cinema;
+}
+.game-status {
+  @apply inline-flex items-center gap-2 text-xs font-black uppercase text-gold;
+  letter-spacing: 0.12em;
+}
+.gold-star {
+  @apply text-lg;
+}
+.poster {
+  @apply overflow-hidden bg-panel;
+}
+.poster img {
+  @apply h-full w-full object-cover;
+}
+.landing {
+  @apply mx-auto grid min-h-[calc(100vh-5rem)] max-w-[1500px] grid-cols-1 overflow-hidden lg:grid-cols-[.8fr_1.2fr];
+}
+.landing-copy {
+  @apply flex flex-col justify-center px-8 py-16 sm:px-14 lg:px-15;
+}
+.landing-copy h1,
+.form-layout h1,
+.top-five h1,
+.results-layout h1,
+.evaluation-screen h1 {
+  @apply mt-7 font-black text-6xl leading-[.92] text-cream sm:text-7xl;
+  font-family: var(--font-display);
+}
+.landing-copy h1 em {
+  @apply not-italic text-red;
+}
+.landing-copy p,
+.form-layout p,
+.top-five > p {
+  @apply mt-7 max-w-lg text-lg leading-8 text-muted-foreground;
+}
+.landing-actions {
+  @apply mt-12 flex flex-wrap gap-4;
+}
+.landing-posters {
+  @apply relative hidden min-h-[660px] overflow-hidden bg-panel lg:block;
+}
+.feature-poster {
+  @apply absolute w-54 overflow-hidden rounded-md border border-border bg-cinema shadow-2xl;
+}
+.feature-poster .poster {
+  @apply h-74;
+}
+.feature-poster > div:last-child {
+  @apply flex items-center justify-between gap-2 p-3 text-sm;
+}
+.feature-poster span {
+  @apply text-gold;
+}
+.poster-0 {
+  transform: rotate(-5deg);
+  left: 5%;
+  top: 23%;
+}
+.poster-1 {
+  transform: rotate(-5deg);
+  left: 37%;
+  top: 10%;
+}
+.poster-2 {
+  transform: rotate(5deg);
+  right: 4%;
+  top: 18%;
+}
+.poster-3 {
+  transform: rotate(-4deg);
+  left: 15%;
+  top: 55%;
+}
+.form-layout {
+  @apply mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-14 px-6 py-14 lg:grid-cols-2;
+}
+.game-form {
+  @apply space-y-6 rounded-lg border border-border bg-panel p-6 sm:p-9;
+}
+.game-form label,
+.game-form legend {
+  @apply block text-sm font-bold text-cream;
+}
+.game-form input {
+  @apply mt-2 h-12 w-full rounded-md border border-border bg-cinema px-4 text-base text-cream outline-none placeholder:text-muted-foreground focus:ring-2 focus:ring-ring;
+}
+.game-form fieldset {
+  @apply space-y-3;
+}
+.number-options {
+  @apply grid grid-cols-5 gap-2;
+}
+.number-options button {
+  @apply h-11 rounded-md border border-border bg-cinema font-bold hover:bg-accent;
+}
+.number-options .active {
+  @apply border-gold bg-gold text-cinema;
+}
+.starting-budget {
+  @apply flex items-center justify-between border-y border-border py-5;
+}
+.starting-budget span {
+  @apply text-sm text-muted-foreground;
+}
+.starting-budget strong {
+  @apply text-xl text-gold;
+}
+.form-error {
+  @apply text-sm text-red;
+}
+.lobby-layout {
+  @apply mx-auto grid max-w-[1540px] gap-12 px-6 py-15 lg:grid-cols-[minmax(0,1fr)_370px];
+}
+.room-panel {
+  @apply relative rounded-xl border border-border bg-panel p-8 sm:p-14;
+}
+.room-panel h1 {
+  @apply mt-4 font-black text-6xl text-cream sm:text-8xl;
+  font-family: var(--font-display);
+}
+.room-panel p {
+  @apply mt-3 text-lg text-muted-foreground;
+}
+.copy-button {
+  @apply mt-8 inline-flex items-center gap-2 rounded-md bg-panel-strong px-5 py-4 font-bold uppercase;
+}
+.section-heading {
+  @apply mt-14 flex items-center justify-between;
+}
+.section-heading h2,
+.how-to h2,
+.standings h2,
+.mobile-collection h2 {
+  @apply text-2xl font-black text-cream;
+}
+.section-heading span {
+  @apply rounded-full bg-panel px-4 py-2 font-mono text-sm text-muted-foreground;
+}
+.lobby-players {
+  @apply mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4;
+}
+.lobby-player {
+  @apply relative flex min-h-54 flex-col items-center justify-center rounded-lg border border-border bg-panel;
+}
+.host-badge {
+  @apply absolute left-3 top-3 inline-flex items-center gap-1 rounded border border-gold/50 bg-gold/10 px-2 py-1 text-[10px] font-black uppercase text-gold;
+}
+.lobby-avatar {
+  @apply grid h-20 w-20 place-items-center rounded-full border-2 border-gold/60 bg-cinema text-xl font-black text-gold;
+}
+.lobby-player strong {
+  @apply mt-4 text-xl;
+}
+.lobby-player small {
+  @apply mt-1 font-bold uppercase text-success;
+}
+.empty-movie-slot {
+  @apply flex min-h-54 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border text-sm font-bold uppercase text-muted-foreground;
+}
+.how-to {
+  @apply h-fit rounded-xl border border-border bg-panel p-7;
+}
+.lobby-sidebar {
+  @apply flex h-fit flex-col gap-5;
+}
+.how-to ol {
+  @apply my-5 space-y-5 border-y border-border py-5;
+}
+.how-to li {
+  @apply flex flex-col gap-1;
+}
+.how-to strong {
+  @apply text-lg;
+}
+.how-to span,
+.how-to p {
+  @apply text-sm text-muted-foreground;
+}
+.how-to > p {
+  @apply mt-4 text-center text-sm text-gold;
+}
+.auction-layout {
+  @apply mx-auto grid max-w-[1540px] gap-8 px-6 py-12 xl:grid-cols-[360px_minmax(440px,1fr)_350px];
+}
+.auction-movie {
+  @apply self-start rounded-lg border border-border bg-panel p-3;
+}
+.auction-poster {
+  @apply aspect-[.67];
+}
+.movie-meta {
+  @apply p-3;
+}
+.movie-meta > span {
+  @apply mr-2 inline-block rounded bg-panel-strong px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground;
+}
+.movie-meta h2 {
+  @apply mt-4 text-3xl font-black;
+}
+.movie-meta > div {
+  @apply mt-4 flex items-center justify-between border-t border-border pt-3;
+}
+.movie-meta small,
+.bid-readout small {
+  @apply text-xs font-black uppercase text-muted-foreground;
+}
+.movie-meta strong {
+  @apply text-lg text-gold;
+}
+.auction-center {
+  @apply flex min-h-[600px] flex-col items-center py-6 text-center;
+}
+.auction-timer {
+  @apply mt-5 flex items-center gap-3 font-black text-7xl text-red sm:text-8xl;
+  font-family: var(--font-display);
+}
+.auction-timer.warning {
+  @apply animate-pulse text-gold;
+}
+.live-dot {
+  @apply h-2.5 w-2.5 rounded-full bg-red;
+}
+.bid-readout {
+  @apply mt-6 flex flex-col items-center relative;
+}
+.bid-readout > strong {
+  @apply mt-2 font-black text-6xl text-red sm:text-7xl transition-all duration-150 inline-block;
+  font-family: var(--font-display);
+}
+.bid-price-animated {
+  animation: bidPop 0.28s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  text-shadow: 0 0 25px oklch(0.62 0.23 28 / 50%);
+}
+@keyframes bidPop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.7;
+    filter: brightness(1.6);
+  }
+  50% {
+    transform: scale(1.12);
+    filter: brightness(1.3);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+.bid-toast {
+  animation: bidToastSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes bidToastSlide {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.bid-readout .game-status {
+  @apply mt-4 rounded-full bg-panel-strong px-5 py-2.5 text-gold transition-all duration-200;
+}
+.bid-controls {
+  @apply mt-8 grid w-full max-w-xl grid-cols-2 gap-3 rounded-xl border border-border bg-panel p-5 shadow-xl shadow-black/20;
+}
+.bid-controls > div {
+  @apply col-span-2 grid grid-cols-3 gap-3;
+}
+.bid-controls button {
+  @apply min-h-12 rounded-md border border-border bg-panel-strong text-sm font-black hover:bg-accent active:scale-95 transition-all duration-100 disabled:opacity-35 disabled:active:scale-100;
+}
+.bid-controls .btn-primary {
+  @apply border-0 text-xl shadow-lg shadow-red/20 active:scale-95;
+}
+.pass-button {
+  @apply text-lg uppercase;
+}
+.sold-panel {
+  @apply mt-auto rounded-lg border border-gold/50 bg-panel p-8;
+}
+.sold-panel > span {
+  @apply font-black uppercase text-gold;
+}
+.sold-panel h2 {
+  @apply mt-2 text-3xl font-black;
+}
+.sold-panel p {
+  @apply my-3 text-muted-foreground;
+}
+.standings {
+  @apply flex h-full flex-col rounded-xl border border-border bg-panel p-5;
+}
+.room-chat {
+  @apply rounded-lg border border-border bg-panel p-4 text-left;
+}
+.standings .room-chat {
+  @apply mt-5;
+}
+.room-chat-heading {
+  @apply flex items-center gap-2 border-b border-border pb-3 text-gold;
+}
+.room-chat-icon {
+  @apply grid h-8 w-8 place-items-center rounded-md bg-gold/10;
+}
+.room-chat-heading h2 {
+  @apply text-base font-black text-cream;
+}
+.chat-messages {
+  @apply mt-3 flex h-44 flex-col gap-3 overflow-y-auto pr-1;
+}
+.chat-message {
+  @apply flex flex-col gap-1 text-sm;
+}
+.chat-message strong {
+  @apply text-xs font-black text-gold;
+}
+.chat-message span {
+  @apply break-words text-cream;
+}
+.chat-empty {
+  @apply my-auto text-center text-sm text-muted-foreground;
+}
+.chat-form {
+  @apply mt-3 border-t border-border pt-3;
+}
+.chat-emoji-row {
+  @apply mb-2 flex items-center gap-1 text-muted-foreground;
+}
+.chat-emoji-row button {
+  @apply grid h-7 w-7 place-items-center rounded-md text-sm hover:bg-panel-strong;
+}
+.chat-compose {
+  @apply flex items-center gap-2 rounded-md border border-border bg-cinema p-1;
+}
+.chat-compose input {
+  @apply h-10 min-w-0 flex-1 bg-transparent px-2 text-sm text-cream outline-none placeholder:text-muted-foreground;
+}
+.chat-compose button {
+  @apply grid h-10 w-10 shrink-0 place-items-center rounded-md bg-red text-primary-foreground hover:bg-red/85 disabled:opacity-40;
+}
+.chat-error {
+  @apply mt-2 text-xs text-red;
+}
+.standings-title {
+  @apply mb-5 flex items-center justify-between border-b border-border pb-4 text-gold;
+}
+.player-card {
+  @apply relative mb-3 flex items-center gap-3 rounded-lg bg-panel-strong p-4;
+}
+.player-card.is-current {
+  @apply border-l-4 border-red;
+}
+.player-card-copy {
+  @apply flex min-w-0 flex-1 flex-col gap-1;
+}
+.player-card-copy strong {
+  @apply truncate;
+}
+.player-card-copy span {
+  @apply flex items-center gap-1 text-sm text-muted-foreground;
+}
+.host-crown {
+  @apply text-gold;
+}
+.budget-summary {
+  @apply mt-auto space-y-1 rounded-md border border-border p-4;
+}
+.budget-summary span {
+  @apply block text-xs font-bold uppercase text-muted-foreground;
+}
+.budget-summary strong {
+  @apply block text-xl text-gold;
+}
+.mobile-collection {
+  @apply mx-auto max-w-[1540px] px-6 pb-12;
+}
+.mobile-collection > div {
+  @apply mt-4 flex gap-4 overflow-x-auto;
+}
+.mobile-collection p {
+  @apply text-muted-foreground;
+}
+.movie-card {
+  @apply relative shrink-0 overflow-hidden rounded-lg border border-border bg-panel text-left transition-transform hover:-translate-y-1;
+  width: 150px;
+}
+.movie-card.selected {
+  @apply border-2 border-gold;
+}
+.movie-card .poster {
+  @apply h-48;
+}
+.movie-card-info {
+  @apply flex items-center justify-between gap-2 p-3 text-sm;
+}
+.movie-card-info strong {
+  @apply truncate;
+}
+.movie-card-info span {
+  @apply whitespace-nowrap text-gold;
+}
+.top-five {
+  @apply mx-auto max-w-6xl px-6 py-14 text-center;
+}
+.top-five > p {
+  @apply mx-auto;
+}
+.selected-count {
+  @apply mt-9 text-sm font-black uppercase text-gold;
+}
+.selected-count strong {
+  @apply ml-2 text-xl;
+}
+.top-five-grid {
+  @apply my-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6;
+}
+.top-five-grid .movie-card {
+  @apply w-full;
+}
+.top-five .btn {
+  @apply min-w-64;
+}
+.evaluation-screen {
+  @apply mx-auto flex min-h-[calc(100vh-5rem)] max-w-4xl flex-col items-center justify-center px-6 text-center;
+}
+.evaluation-screen > svg {
+  @apply text-gold;
+}
+.evaluation-screen h1 {
+  @apply text-5xl sm:text-7xl;
+}
+.evaluation-lines {
+  @apply mt-10 flex flex-col gap-4 text-lg text-muted-foreground;
+}
+.evaluation-lines span:first-child {
+  @apply text-gold;
+}
+@media (max-width: 1279px) {
+  .auction-layout {
+    @apply grid-cols-[minmax(260px,360px)_minmax(0,1fr)];
+  }
+  .standings {
+    @apply col-span-2;
+  }
+  .standings .player-card {
+    @apply inline-flex w-[calc(25%-12px)] align-top;
+  }
+  .budget-summary {
+    @apply mt-4;
+  }
+}
+@media (max-width: 767px) {
+  .site-header {
+    @apply h-16 px-5;
+  }
+  .brand {
+    @apply text-xl;
+  }
+  .landing-copy {
+    @apply px-6 py-14;
+  }
+  .landing-copy h1,
+  .form-layout h1,
+  .top-five h1,
+  .results-layout h1 {
+    @apply text-5xl;
+  }
+  .form-layout {
+    @apply gap-8 py-10;
+  }
+  .lobby-layout {
+    @apply gap-8 px-4 py-7;
+  }
+  .room-panel {
+    @apply p-6;
+  }
+  .room-panel h1 {
+    @apply text-5xl;
+  }
+  .auction-layout {
+    @apply grid-cols-1 px-4 py-6;
+  }
+  .auction-movie {
+    @apply grid grid-cols-[120px_minmax(0,1fr)] gap-1;
+  }
+  .auction-poster {
+    @apply h-48;
+  }
+  .movie-meta {
+    @apply flex flex-col justify-center;
+  }
+  .auction-center {
+    @apply min-h-0 py-4;
+  }
+  .auction-timer {
+    @apply text-6xl;
+  }
+  .bid-readout {
+    @apply mt-14;
+  }
+  .bid-readout > strong {
+    @apply text-6xl;
+  }
+  .bid-controls {
+    @apply mt-10;
+  }
+  .standings {
+    @apply col-span-1;
+  }
+  .standings .player-card {
+    @apply flex w-full;
+  }
+  .mobile-collection {
+    @apply px-4;
+  }
+  .top-five-grid {
+    @apply grid-cols-2;
+  }
+  .movie-card .poster {
+    @apply h-42;
+  }
+  .evaluation-screen h1 {
+    @apply text-4xl;
+  }
+}
