@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 const posterMemoryCache = new Map<string, string>();
 const POSTER_STORAGE_PREFIX = "cinebid_poster_";
 
-// High-resolution verified official poster mappings for movies
-const OFFICIAL_POSTER_SEEDS: Record<string, string> = {
+// High-resolution verified official poster mappings for all 44+ movies
+export const OFFICIAL_POSTER_SEEDS: Record<string, string> = {
   jawan: "https://upload.wikimedia.org/wikipedia/en/3/39/Jawan_film_poster.jpg",
   dangal: "https://upload.wikimedia.org/wikipedia/en/9/99/Dangal_Poster.jpg",
   andhadhun: "https://upload.wikimedia.org/wikipedia/en/4/47/Andhadhun_poster.jpg",
@@ -36,54 +36,50 @@ const OFFICIAL_POSTER_SEEDS: Record<string, string> = {
   "chak-de-india": "https://upload.wikimedia.org/wikipedia/en/0/0c/Chak_De%21_India.jpg",
   "munna-bhai-mbbs": "https://upload.wikimedia.org/wikipedia/en/a/a2/Munnabhai_M.B.B.S._poster.jpg",
   "hera-pheri": "https://upload.wikimedia.org/wikipedia/en/2/2f/Herapheri.jpg",
+  "om-shanti-om": "https://upload.wikimedia.org/wikipedia/en/9/9b/Om_Shanti_Om_poster.jpg",
+  "chennai-express": "https://upload.wikimedia.org/wikipedia/en/1/1b/Chennai_Express.jpg",
+  war: "https://upload.wikimedia.org/wikipedia/en/6/6f/War_official_poster.jpg",
+  brahmastra: "https://upload.wikimedia.org/wikipedia/en/4/40/Brahmastra_Part_One_Shiva.jpg",
+  "kabir-singh": "https://upload.wikimedia.org/wikipedia/en/d/dc/Kabir_Singh.jpg",
+  uri: "https://upload.wikimedia.org/wikipedia/en/3/3b/URI_-_New_poster.jpg",
+  vikram: "https://upload.wikimedia.org/wikipedia/en/9/93/Vikram_2022_poster.jpg",
+  jailer: "https://upload.wikimedia.org/wikipedia/en/c/cb/Jailer_2023_Tamil_film_poster.jpg",
   interstellar: "https://upload.wikimedia.org/wikipedia/en/b/bc/Interstellar_film_poster.jpg",
   inception: "https://upload.wikimedia.org/wikipedia/en/2/2e/Inception_%282010%29_theatrical_poster.jpg",
   "the-dark-knight": "https://upload.wikimedia.org/wikipedia/en/1/1c/The_Dark_Knight_%282008_film%29.jpg",
   oppenheimer: "https://upload.wikimedia.org/wikipedia/en/4/4a/Oppenheimer_%28film%29.jpg",
   titanic: "https://upload.wikimedia.org/wikipedia/en/1/18/Titanic_%281997_film%29_poster.png",
-  avatar: "https://upload.wikimedia.org/wikipedia/en/d/d6/Avatar_%282009_film%29_poster.pyg",
-  vikram: "https://upload.wikimedia.org/wikipedia/en/9/93/Vikram_2022_poster.jpg",
-  jailer: "https://upload.wikimedia.org/wikipedia/en/c/cb/Jailer_2023_Tamil_film_poster.jpg",
-  uri: "https://upload.wikimedia.org/wikipedia/en/3/3b/URI_-_New_poster.jpg",
-  "kabir-singh": "https://upload.wikimedia.org/wikipedia/en/d/dc/Kabir_Singh.jpg",
-  war: "https://upload.wikimedia.org/wikipedia/en/6/6f/War_official_poster.jpg",
-  "om-shanti-om": "https://upload.wikimedia.org/wikipedia/en/9/9b/Om_Shanti_Om_poster.jpg",
-  "chennai-express": "https://upload.wikimedia.org/wikipedia/en/1/1b/Chennai_Express.jpg",
-  brahmastra: "https://upload.wikimedia.org/wikipedia/en/4/40/Brahmastra_Part_One_Shiva.jpg",
+  avatar: "https://upload.wikimedia.org/wikipedia/en/d/d6/Avatar_%282009_film%29_poster.jpg",
 };
 
 /**
  * Fetch real-time official movie poster image URL.
- * Queries:
- * 1. Seeded high-definition poster mappings
- * 2. Local browser storage cache
- * 3. Wikipedia REST API Page Summary endpoint (Public, CORS-enabled, genuine official posters)
+ * Uses verified seed mappings, local cache, and Wikipedia REST API fallback.
  */
 export async function fetchRealMoviePoster(title: string, id?: string): Promise<string> {
   const cleanTitle = title.trim();
   const normalizedKey = (id || cleanTitle).toLowerCase().replace(/[^a-z0-9]/g, "-");
 
-  // 1. Check in-memory cache
+  // 1. In-memory cache
   if (posterMemoryCache.has(normalizedKey)) {
     return posterMemoryCache.get(normalizedKey)!;
   }
 
-  // 2. Check official seed mapping
+  // 2. Direct seed lookup
   if (id && OFFICIAL_POSTER_SEEDS[id.toLowerCase()]) {
-    const url = OFFICIAL_POSTER_SEEDS[id.toLowerCase()] || "";
-    if (url) {
-      posterMemoryCache.set(normalizedKey, url);
-      return url;
-    }
+    const url = OFFICIAL_POSTER_SEEDS[id.toLowerCase()]!;
+    posterMemoryCache.set(normalizedKey, url);
+    return url;
   }
+
   for (const [seedKey, seedUrl] of Object.entries(OFFICIAL_POSTER_SEEDS)) {
-    if (normalizedKey.includes(seedKey) || cleanTitle.toLowerCase().includes(seedKey)) {
+    if (normalizedKey === seedKey || normalizedKey.includes(seedKey) || cleanTitle.toLowerCase().includes(seedKey)) {
       posterMemoryCache.set(normalizedKey, seedUrl);
       return seedUrl;
     }
   }
 
-  // 3. Check localStorage cache
+  // 3. LocalStorage cache
   if (typeof window !== "undefined") {
     try {
       const stored = localStorage.getItem(`${POSTER_STORAGE_PREFIX}${normalizedKey}`);
@@ -96,7 +92,7 @@ export async function fetchRealMoviePoster(title: string, id?: string): Promise<
     }
   }
 
-  // 4. Query Wikipedia REST API for genuine live movie poster
+  // 4. Wikipedia REST API fallback
   try {
     const wikiQueries = [
       `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanTitle + " (film)")}`,
@@ -124,21 +120,20 @@ export async function fetchRealMoviePoster(title: string, id?: string): Promise<
           }
         }
       } catch {
-        // continue to next query
+        // continue
       }
     }
   } catch (e) {
     console.warn(`[Poster Fetch] Failed to fetch poster for "${cleanTitle}":`, e);
   }
 
-  // Fallback if no online poster could be resolved
   const fallback = OFFICIAL_POSTER_SEEDS["jawan"] || "https://upload.wikimedia.org/wikipedia/en/3/39/Jawan_film_poster.jpg";
   posterMemoryCache.set(normalizedKey, fallback);
   return fallback;
 }
 
 /**
- * React hook to load movie poster in real-time
+ * React hook to load movie poster with verified direct fallback
  */
 export function useMoviePoster(title: string, id?: string, initialUrl?: string): string {
   const [posterUrl, setPosterUrl] = useState<string>(() => {
@@ -161,7 +156,7 @@ export function useMoviePoster(title: string, id?: string, initialUrl?: string):
     };
   }, [title, id]);
 
-  return posterUrl || OFFICIAL_POSTER_SEEDS["jawan"] || "https://upload.wikimedia.org/wikipedia/en/3/39/Jawan_film_poster.jpg";
+  return posterUrl || (id && OFFICIAL_POSTER_SEEDS[id.toLowerCase()]) || OFFICIAL_POSTER_SEEDS["jawan"] || "";
 }
 
 export function getOfficialPosterUrl(id: string): string | undefined {

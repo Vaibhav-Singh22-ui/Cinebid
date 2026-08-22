@@ -1,4 +1,8 @@
+import { cricketPlayers, getRandomizedCricketSlate, type CricketPlayerItem, type CricketRole } from "./cricket-data";
+
 export type GameStatus = "LOBBY" | "AUCTION" | "TOP_FIVE" | "EVALUATING" | "RESULTS";
+
+export type AuctionType = "CINEMA" | "CRICKET";
 
 export type MovieCategory =
   | "ALL"
@@ -6,23 +10,46 @@ export type MovieCategory =
   | "SOUTH_PAN_INDIA"
   | "HOLLYWOOD"
   | "MASTERPIECES"
-  | "ACTION_THRILLER";
+  | "ACTION_THRILLER"
+  | "BATTERS"
+  | "FAST_BOWLERS"
+  | "SPINNERS"
+  | "ALL_ROUNDERS"
+  | "WICKETKEEPERS";
 
 export interface Movie {
   id: string;
-  title: string;
-  year: number;
-  genre: string;
-  genres: string[];
-  basePrice: number;
-  posterPosition: string;
-  imdbRating: number;
-  boxOffice: number; // in Crores
-  director: string;
-  studio?: string;
+  title: string; // Movie Title OR Cricket Player Name
+  year: number; // Release Year OR Age
+  genre: string; // Genre OR Cricket Role Name (e.g. "Top-Order Batter")
+  genres: string[]; // List of genres or traits
+  basePrice: number; // in Crores
+  posterPosition?: string;
+  imdbRating: number; // IMDb rating (e.g. 8.4) OR Player Impact Index (e.g. 9.8)
+  boxOffice: number; // Box Office in Cr OR Career T20 Runs/Wickets
+  director: string; // Director OR Country (e.g. "Christopher Nolan" or "India")
+  studio?: string; // Studio Name OR Specialization Specialty
   category?: MovieCategory | string;
   tagline?: string;
+  photoUrl?: string; // High-res portrait for cricket players
+  role?: CricketRole;
+  country?: string;
+  countryFlag?: string;
+  stats?: {
+    matches: number;
+    runs?: number;
+    wickets?: number;
+    strikeRate?: number;
+    economy?: number;
+    highestScore?: string;
+    bestBowling?: string;
+    fifties?: number;
+  };
+  signatureSkill?: string;
+  auctionType?: AuctionType;
 }
+
+export type AuctionItem = Movie;
 
 export interface OwnedMovie extends Movie {
   purchasePrice: number;
@@ -32,7 +59,7 @@ export interface OwnedMovie extends Movie {
 
 export interface Player {
   id: string;
-  name: string;
+  name: string; // Franchise / Producer Name (chosen by the human/bot player)
   budget: number;
   initialBudget: number;
   movies: OwnedMovie[];
@@ -49,6 +76,7 @@ export interface RoomSettings {
   auctionSeconds: number;
   totalMovies: number;
   category?: string | undefined;
+  auctionType?: AuctionType;
 }
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
@@ -57,44 +85,67 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   auctionSeconds: 30,
   totalMovies: 15,
   category: "ALL",
+  auctionType: "CINEMA",
 };
 
 export const formatCr = (amount: number) => `₹${amount} Cr`;
 
 /**
- * Recommended movie pool quantity based on player count.
- * Rule: Every player must buy at least 5 movies for their final portfolio.
- * For 2 players -> 15 movies
- * For 3 players -> 22 movies
- * For 4 players -> 28 movies
- * For 5 players -> 35 movies
- * For 6 players -> 42 movies
- * For 8 players -> 56 movies
- * For N players -> Math.max(15, N * 7)
+ * Recommended item pool quantity based on player count and auction type.
+ * Rule for Cricket (IPL Mega Auction): Squad size is Min 12 to Max 18 players per franchise.
+ * Rule for Cinema: Studio slate is 5 films per producer.
  */
-export function getRecommendedMoviePoolSize(numPlayers: number): number {
+export function getRecommendedMoviePoolSize(
+  numPlayers: number,
+  auctionType: AuctionType = "CINEMA",
+): number {
   const count = Math.max(1, numPlayers);
+  if (auctionType === "CRICKET") {
+    // 2 franchises -> at least 60 players
+    // 3 franchises -> at least 85 players
+    // 4 franchises -> at least 110 players
+    // 5 franchises -> at least 135 players
+    // 6 franchises -> at least 160 players
+    if (count <= 2) return 60;
+    if (count === 3) return 85;
+    if (count === 4) return 110;
+    if (count === 5) return 135;
+    if (count === 6) return 160;
+    return count * 28;
+  }
+
   if (count <= 2) return 15;
   if (count === 3) return 22;
   if (count === 4) return 28;
   if (count === 5) return 35;
   if (count === 6) return 42;
-  if (count >= 7) return Math.max(15, count * 7);
   return Math.max(15, count * 7);
 }
 
 /**
- * Fisher-Yates shuffle algorithm to generate a randomized, exciting movie auction slate
- * with optional studio / category prioritization.
+ * Fisher-Yates shuffle algorithm to generate a randomized item auction slate
+ * for either Cinema (Movies) or Cricket Superstars.
  */
-export function getRandomizedMovieSlate(count: number = 15, category: string = "ALL"): Movie[] {
+export function getRandomizedMovieSlate(
+  count = 15,
+  category = "ALL",
+  auctionType: AuctionType = "CINEMA",
+): Movie[] {
+  if (auctionType === "CRICKET") {
+    const cricketSlate = getRandomizedCricketSlate(count, category);
+    return cricketSlate.map((c) => ({
+      ...c,
+      auctionType: "CRICKET",
+    }));
+  }
+
   let pool = [...movies];
 
   if (category && category !== "ALL") {
     const matching = pool.filter(
       (m) =>
         m.category?.toUpperCase() === category.toUpperCase() ||
-        m.studio?.toUpperCase().includes(category.toUpperCase())
+        m.studio?.toUpperCase().includes(category.toUpperCase()),
     );
 
     if (matching.length >= count) {
@@ -114,7 +165,10 @@ export function getRandomizedMovieSlate(count: number = 15, category: string = "
     pool[j] = temp;
   }
 
-  return pool.slice(0, Math.min(count, pool.length));
+  return pool.slice(0, Math.min(count, pool.length)).map((m) => ({
+    ...m,
+    auctionType: "CINEMA",
+  }));
 }
 
 export const movies: Movie[] = [
@@ -133,6 +187,7 @@ export const movies: Movie[] = [
     studio: "Red Chillies Entertainment",
     category: "BOLLYWOOD",
     tagline: "High-octane mass action spectacle of justice and revenge",
+    auctionType: "CINEMA",
   },
   {
     id: "dangal",
@@ -148,6 +203,7 @@ export const movies: Movie[] = [
     studio: "Aamir Khan Productions / Disney India",
     category: "BOLLYWOOD",
     tagline: "Inspiring wrestling biopic that conquered global cinema",
+    auctionType: "CINEMA",
   },
   {
     id: "andhadhun",
@@ -163,6 +219,7 @@ export const movies: Movie[] = [
     studio: "Matchbox Pictures / Viacom18",
     category: "MASTERPIECES",
     tagline: "Twisty suspense masterpiece filled with deceptive noir",
+    auctionType: "CINEMA",
   },
   {
     id: "gully-boy",
@@ -178,6 +235,7 @@ export const movies: Movie[] = [
     studio: "Excel Entertainment / Tiger Baby",
     category: "BOLLYWOOD",
     tagline: "Underdog street hip-hop revolution from the gullies of Mumbai",
+    auctionType: "CINEMA",
   },
   {
     id: "lagaan",
@@ -193,6 +251,7 @@ export const movies: Movie[] = [
     studio: "Aamir Khan Productions",
     category: "MASTERPIECES",
     tagline: "Academy Award nominated classic of courage, unity, and cricket",
+    auctionType: "CINEMA",
   },
   {
     id: "3-idiots",
@@ -208,6 +267,7 @@ export const movies: Movie[] = [
     studio: "Vinod Chopra Films",
     category: "BOLLYWOOD",
     tagline: "Iconic celebration of chasing excellence over success",
+    auctionType: "CINEMA",
   },
   {
     id: "queen",
@@ -223,6 +283,7 @@ export const movies: Movie[] = [
     studio: "Phantom Films / Viacom18",
     category: "BOLLYWOOD",
     tagline: "Heartwarming solo journey of liberation and self-love",
+    auctionType: "CINEMA",
   },
   {
     id: "drishyam",
@@ -238,6 +299,7 @@ export const movies: Movie[] = [
     studio: "Panorama Studios",
     category: "BOLLYWOOD",
     tagline: "Genius alibi game between a protective father and police",
+    auctionType: "CINEMA",
   },
   {
     id: "barfi",
@@ -253,6 +315,7 @@ export const movies: Movie[] = [
     studio: "UTV Motion Pictures / Ishana Movies",
     category: "MASTERPIECES",
     tagline: "Poetic Chaplin-esque celebration of unconditional love",
+    auctionType: "CINEMA",
   },
   {
     id: "taare",
@@ -268,6 +331,7 @@ export const movies: Movie[] = [
     studio: "Aamir Khan Productions",
     category: "MASTERPIECES",
     tagline: "Every child is special — timeless emotional masterpiece",
+    auctionType: "CINEMA",
   },
   {
     id: "znmd",
@@ -283,6 +347,7 @@ export const movies: Movie[] = [
     studio: "Excel Entertainment",
     category: "BOLLYWOOD",
     tagline: "Ultimate road-trip ode to friendship and living fearlessly",
+    auctionType: "CINEMA",
   },
   {
     id: "swades",
@@ -298,6 +363,7 @@ export const movies: Movie[] = [
     studio: "Ashutosh Gowariker Productions / UTV",
     category: "MASTERPIECES",
     tagline: "A NASA scientist rediscovers his roots and ignites change",
+    auctionType: "CINEMA",
   },
   {
     id: "sholay",
@@ -313,6 +379,7 @@ export const movies: Movie[] = [
     studio: "Sippy Films",
     category: "MASTERPIECES",
     tagline: "The greatest cinematic saga in the history of Bollywood",
+    auctionType: "CINEMA",
   },
   {
     id: "ddlj",
@@ -328,6 +395,7 @@ export const movies: Movie[] = [
     studio: "Yash Raj Films (YRF)",
     category: "BOLLYWOOD",
     tagline: "Come fall in love — the defining romance of generations",
+    auctionType: "CINEMA",
   },
   {
     id: "stree-2",
@@ -343,6 +411,7 @@ export const movies: Movie[] = [
     studio: "Maddock Films / Jio Studios",
     category: "BOLLYWOOD",
     tagline: "Chanderi returns to face Sarkata in a record-shattering horror comedy",
+    auctionType: "CINEMA",
   },
   {
     id: "animal",
@@ -358,6 +427,7 @@ export const movies: Movie[] = [
     studio: "T-Series / Bhadrakali Pictures",
     category: "BOLLYWOOD",
     tagline: "An unhinged son's obsessive and violent devotion to his father",
+    auctionType: "CINEMA",
   },
   {
     id: "pathaan",
@@ -373,6 +443,7 @@ export const movies: Movie[] = [
     studio: "Yash Raj Films (YRF)",
     category: "BOLLYWOOD",
     tagline: "An exiled RAW spy returns to safeguard the nation from bioterror",
+    auctionType: "CINEMA",
   },
   {
     id: "pk",
@@ -388,6 +459,7 @@ export const movies: Movie[] = [
     studio: "Vinod Chopra Films",
     category: "BOLLYWOOD",
     tagline: "An innocent alien questions human dogmas with profound innocence",
+    auctionType: "CINEMA",
   },
   {
     id: "bajrangi-bhaijaan",
@@ -403,6 +475,7 @@ export const movies: Movie[] = [
     studio: "Salman Khan Films / Eros International",
     category: "BOLLYWOOD",
     tagline: "A pure-hearted man embarks on an impossible border-crossing rescue",
+    auctionType: "CINEMA",
   },
   {
     id: "gangs-of-wasseypur",
@@ -418,6 +491,7 @@ export const movies: Movie[] = [
     studio: "AKFPL / Viacom18",
     category: "MASTERPIECES",
     tagline: "The multi-generational coal mafia blood feud of Dhanbad",
+    auctionType: "CINEMA",
   },
   {
     id: "chak-de-india",
@@ -433,6 +507,7 @@ export const movies: Movie[] = [
     studio: "Yash Raj Films (YRF)",
     category: "BOLLYWOOD",
     tagline: "Disgraced coach Kabir Khan builds a champion women's hockey team",
+    auctionType: "CINEMA",
   },
   {
     id: "munna-bhai-mbbs",
@@ -448,6 +523,7 @@ export const movies: Movie[] = [
     studio: "Vinod Chopra Films",
     category: "BOLLYWOOD",
     tagline: "A street gangster enrolls in medical school with the magic of Jaadu Ki Jhappi",
+    auctionType: "CINEMA",
   },
   {
     id: "hera-pheri",
@@ -463,6 +539,7 @@ export const movies: Movie[] = [
     studio: "A.G. Films",
     category: "BOLLYWOOD",
     tagline: "Three impoverished roommates land the wrong ransom phone call",
+    auctionType: "CINEMA",
   },
   {
     id: "om-shanti-om",
@@ -478,6 +555,7 @@ export const movies: Movie[] = [
     studio: "Red Chillies Entertainment",
     category: "BOLLYWOOD",
     tagline: "Reincarnation, 70s Bollywood glam, and timeless love",
+    auctionType: "CINEMA",
   },
   {
     id: "chennai-express",
@@ -493,6 +571,7 @@ export const movies: Movie[] = [
     studio: "Red Chillies / UTV Motion Pictures",
     category: "BOLLYWOOD",
     tagline: "Don't underestimate the power of a common man on a South rail journey",
+    auctionType: "CINEMA",
   },
   {
     id: "war",
@@ -508,6 +587,7 @@ export const movies: Movie[] = [
     studio: "Yash Raj Films (YRF)",
     category: "BOLLYWOOD",
     tagline: "Master spy mentor vs protege in high-octane globe-trotting warfare",
+    auctionType: "CINEMA",
   },
   {
     id: "brahmastra",
@@ -523,6 +603,7 @@ export const movies: Movie[] = [
     studio: "Dharma Productions / Star Studios",
     category: "BOLLYWOOD",
     tagline: "Astraverse begins with ancient celestial weapons in modern India",
+    auctionType: "CINEMA",
   },
   {
     id: "kabir-singh",
@@ -538,6 +619,7 @@ export const movies: Movie[] = [
     studio: "T-Series / Cine1 Studios",
     category: "BOLLYWOOD",
     tagline: "Intense tale of a brilliant surgeon spiraling after heartbreak",
+    auctionType: "CINEMA",
   },
   {
     id: "uri",
@@ -553,6 +635,7 @@ export const movies: Movie[] = [
     studio: "RSVP Movies",
     category: "BOLLYWOOD",
     tagline: "How's the josh? High sir! Covert retaliation operation",
+    auctionType: "CINEMA",
   },
 
   // --- SOUTH INDIAN PAN-INDIA BLOCKBUSTERS (Base Price: ₹1 Cr) ---
@@ -570,6 +653,7 @@ export const movies: Movie[] = [
     studio: "DVV Entertainment",
     category: "SOUTH_PAN_INDIA",
     tagline: "Oscar-winning cinematic spectacle of brotherly rebellion",
+    auctionType: "CINEMA",
   },
   {
     id: "baahubali-2",
@@ -585,6 +669,7 @@ export const movies: Movie[] = [
     studio: "Arka Media Works",
     category: "SOUTH_PAN_INDIA",
     tagline: "The monumental mythological epic that redefined Indian cinema",
+    auctionType: "CINEMA",
   },
   {
     id: "kgf-2",
@@ -600,6 +685,7 @@ export const movies: Movie[] = [
     studio: "Hombale Films",
     category: "SOUTH_PAN_INDIA",
     tagline: "Monster Rocky takes over the gold empire in sheer style",
+    auctionType: "CINEMA",
   },
   {
     id: "pushpa",
@@ -615,6 +701,7 @@ export const movies: Movie[] = [
     studio: "Mythri Movie Makers / Muttamsetty",
     category: "SOUTH_PAN_INDIA",
     tagline: "Pushpa Raj rises to rule the red sandalwood syndicates",
+    auctionType: "CINEMA",
   },
   {
     id: "kantara",
@@ -630,6 +717,7 @@ export const movies: Movie[] = [
     studio: "Hombale Films",
     category: "SOUTH_PAN_INDIA",
     tagline: "Folklore and divine wrath clash with forest corruption",
+    auctionType: "CINEMA",
   },
   {
     id: "kalki-2898",
@@ -645,6 +733,7 @@ export const movies: Movie[] = [
     studio: "Vyjayanthi Movies",
     category: "SOUTH_PAN_INDIA",
     tagline: "Mahabharata lore meets futuristic dystopia in grand scale",
+    auctionType: "CINEMA",
   },
   {
     id: "vikram",
@@ -660,6 +749,7 @@ export const movies: Movie[] = [
     studio: "Raaj Kamal Films International",
     category: "SOUTH_PAN_INDIA",
     tagline: "Ghost operative unleashes retribution against drug cartels",
+    auctionType: "CINEMA",
   },
   {
     id: "jailer",
@@ -675,6 +765,7 @@ export const movies: Movie[] = [
     studio: "Sun Pictures",
     category: "SOUTH_PAN_INDIA",
     tagline: "Superstar Rajinikanth in sheer mass swagger as Tiger Muthuvel Pandian",
+    auctionType: "CINEMA",
   },
   {
     id: "tumbbad",
@@ -690,6 +781,7 @@ export const movies: Movie[] = [
     studio: "Sohum Shah Films / Color Yellow",
     category: "MASTERPIECES",
     tagline: "Atmospheric mythological horror on insatiable human greed",
+    auctionType: "CINEMA",
   },
 
   // --- HOLLYWOOD & GLOBAL CULMINATIONS (Base Price: ₹1 Cr) ---
@@ -707,6 +799,7 @@ export const movies: Movie[] = [
     studio: "Paramount Pictures / Warner Bros / Syncopy",
     category: "HOLLYWOOD",
     tagline: "Mankind was born on Earth. It was never meant to die here.",
+    auctionType: "CINEMA",
   },
   {
     id: "inception",
@@ -722,6 +815,7 @@ export const movies: Movie[] = [
     studio: "Warner Bros / Legendary / Syncopy",
     category: "HOLLYWOOD",
     tagline: "Your mind is the scene of the crime in dream-sharing espionage",
+    auctionType: "CINEMA",
   },
   {
     id: "the-dark-knight",
@@ -737,6 +831,7 @@ export const movies: Movie[] = [
     studio: "Warner Bros / DC Comics / Legendary",
     category: "HOLLYWOOD",
     tagline: "Why so serious? Batman faces the anarchy of the Joker",
+    auctionType: "CINEMA",
   },
   {
     id: "oppenheimer",
@@ -752,6 +847,7 @@ export const movies: Movie[] = [
     studio: "Universal Pictures / Syncopy",
     category: "HOLLYWOOD",
     tagline: "The story of American Prometheus and the dawn of the atomic age",
+    auctionType: "CINEMA",
   },
   {
     id: "titanic",
@@ -767,6 +863,7 @@ export const movies: Movie[] = [
     studio: "Paramount Pictures / 20th Century Fox",
     category: "HOLLYWOOD",
     tagline: "Nothing on Earth could come between them on the ship of dreams",
+    auctionType: "CINEMA",
   },
   {
     id: "avatar",
@@ -782,5 +879,6 @@ export const movies: Movie[] = [
     studio: "20th Century Fox / Lightstorm",
     category: "HOLLYWOOD",
     tagline: "Enter the world of Pandora in revolutionary 3D spectacle",
+    auctionType: "CINEMA",
   },
 ];

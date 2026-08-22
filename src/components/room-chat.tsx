@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageCircle, Send, Smile } from "lucide-react";
+import { MessageCircle, Send, Smile, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getCurrentUser, getRoom, saveRoom } from "@/lib/game-manager";
 
@@ -12,7 +12,7 @@ export interface DisplayMessage {
   isSystem?: boolean;
 }
 
-const quickEmojis = ["🔥", "👏", "🎬", "💸", "🏆", "🍿"];
+const quickEmojis = ["🔥", "👏", "🏏", "💸", "🏆", "⚡", "🎯", "👑"];
 
 function mergeDeduplicatedMessages(
   existing: DisplayMessage[],
@@ -24,11 +24,13 @@ function mergeDeduplicatedMessages(
     if (!inc.body || !inc.player_name) continue;
     if (inc.isSystem || inc.player_name === "System" || inc.player_name === "Cinebid Host") continue;
 
-    // Strict deduplication by ID and by sender+body content
+    // Strict deduplication by ID and by sender+body content within a short window
     const isDuplicate = result.some((item) => {
       if (item.id === inc.id) return true;
-      if (item.player_name.trim().toLowerCase() === inc.player_name.trim().toLowerCase() &&
-          item.body.trim() === inc.body.trim()) {
+      if (
+        item.player_name.trim().toLowerCase() === inc.player_name.trim().toLowerCase() &&
+        item.body.trim() === inc.body.trim()
+      ) {
         const t1 = item.timestamp || (item.created_at ? new Date(item.created_at).getTime() : 0);
         const t2 = inc.timestamp || (inc.created_at ? new Date(inc.created_at).getTime() : 0);
         if (t1 > 0 && t2 > 0) {
@@ -50,13 +52,15 @@ function mergeDeduplicatedMessages(
 export function RoomChat({
   roomCode,
   playerName,
+  className,
 }: {
   roomCode: string;
   playerName?: string;
+  className?: string;
 }) {
   const code = roomCode.toUpperCase();
   const [activePlayerName, setActivePlayerName] = useState(
-    playerName || "Player",
+    playerName || "Franchise Owner",
   );
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [message, setMessage] = useState("");
@@ -197,7 +201,7 @@ export function RoomChat({
     setError("");
 
     const currentUser = getCurrentUser();
-    const senderName = activePlayerName || currentUser.name || "Cinephile";
+    const senderName = activePlayerName || currentUser.name || "Franchise Owner";
     const now = Date.now();
     const newMsgId = `msg_${now}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -257,26 +261,41 @@ export function RoomChat({
   };
 
   return (
-    <div className="room-chat flex flex-col h-full min-h-[300px] max-h-[460px] bg-panel/80 border border-border/80 rounded-xl p-3 shadow-lg">
-      <div className="room-chat-heading flex items-center gap-2 border-b border-border/60 pb-2 mb-2">
-        <span className="room-chat-icon p-1.5 rounded-lg bg-gold/15 text-gold">
-          <MessageCircle size={16} />
-        </span>
-        <h2 className="text-xs uppercase font-bold tracking-wider text-cream flex items-center gap-1.5">
-          Live Studio Chat
-          <span className="text-[10px] text-muted-foreground font-normal">
-            ({messages.length})
+    <div
+      className={`room-chat flex flex-col flex-1 h-full min-h-[380px] lg:min-h-[420px] bg-panel/95 border border-border/80 rounded-2xl p-4 shadow-xl backdrop-blur-md ${
+        className || ""
+      }`}
+    >
+      {/* Header */}
+      <div className="room-chat-heading flex items-center justify-between border-b border-border/70 pb-3 mb-3 flex-shrink-0">
+        <div className="flex items-center gap-2.5">
+          <span className="room-chat-icon p-2 rounded-xl bg-gold/15 text-gold border border-gold/30 shadow-sm">
+            <MessageCircle size={17} />
           </span>
-        </h2>
+          <div className="flex flex-col text-left">
+            <h2 className="text-xs uppercase font-black tracking-wider text-cream flex items-center gap-1.5 font-display">
+              Live War-Room Chat
+            </h2>
+            <span className="text-[10px] text-muted-foreground">
+              Banter & Strategic Taunts
+            </span>
+          </div>
+        </div>
+
+        <span className="px-2.5 py-0.5 rounded-full bg-black/50 border border-border text-[10px] font-mono font-bold text-gold">
+          {messages.length} msgs
+        </span>
       </div>
 
+      {/* Messages Scroll Area */}
       <div
         ref={chatContainerRef}
-        className="chat-messages flex-1 overflow-y-auto flex flex-col gap-2 pr-1 min-h-[140px]"
+        className="chat-messages flex-1 overflow-y-auto flex flex-col gap-2.5 pr-1.5 min-h-[260px] h-full"
       >
         {messages.length === 0 ? (
-          <div className="chat-empty my-auto text-center text-xs text-muted-foreground py-6">
-            No banter yet. Start negotiating with rival producers!
+          <div className="chat-empty my-auto text-center text-xs text-muted-foreground py-10 px-4 flex flex-col items-center gap-2">
+            <Sparkles size={22} className="text-gold/60" />
+            <span>War room is quiet. Fire a quick bid taunt or emoji to shake rival franchises!</span>
           </div>
         ) : (
           messages.map((m) => {
@@ -286,57 +305,69 @@ export function RoomChat({
             return (
               <div
                 key={m.id}
-                className={`chat-message p-2 rounded-lg text-xs break-words ${
+                className={`chat-message p-3 rounded-2xl text-xs break-words shadow-sm transition-all text-left ${
                   isMe
-                    ? "bg-gold/15 border border-gold/30 ml-3"
-                    : "bg-black/30 border border-border/40 mr-3"
+                    ? "bg-gradient-to-r from-gold/20 to-panel-strong border border-gold/40 ml-4 self-end max-w-[88%]"
+                    : "bg-black/50 border border-border/60 mr-4 self-start max-w-[88%]"
                 }`}
               >
-                <div className="flex items-center justify-between gap-1 mb-0.5">
-                  <strong className={isMe ? "text-gold" : "text-cream/90"}>
-                    {m.player_name} {isMe && <span className="text-[10px] text-muted-foreground font-normal">(You)</span>}
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <strong className={`font-black text-[11px] truncate ${isMe ? "text-gold" : "text-cream"}`}>
+                    {m.player_name}
+                    {isMe && (
+                      <span className="text-[9px] text-gold/80 font-normal uppercase ml-1">
+                        (You)
+                      </span>
+                    )}
                   </strong>
+                  {m.timestamp && (
+                    <span className="text-[9px] text-muted-foreground font-mono">
+                      {new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </span>
+                  )}
                 </div>
-                <span className="text-cream/90">{m.body}</span>
+                <p className="text-cream/90 leading-relaxed text-xs">{m.body}</p>
               </div>
             );
           })
         )}
       </div>
 
-      <form onSubmit={submit} className="chat-form border-t border-border/60 pt-2 mt-2">
-        <div className="chat-emoji-row flex items-center gap-1 mb-1.5">
-          <Smile size={13} className="text-muted-foreground mr-0.5" />
+      {/* Emojis & Input Form */}
+      <form onSubmit={submit} className="chat-form border-t border-border/70 pt-3 mt-3">
+        <div className="chat-emoji-row flex items-center gap-1.5 mb-2 overflow-x-auto pb-1">
+          <Smile size={14} className="text-gold mr-0.5 flex-shrink-0" />
           {quickEmojis.map((emoji) => (
             <button
               key={emoji}
               type="button"
               onClick={() => sendEmoji(emoji)}
-              className="text-xs hover:scale-125 transition-transform p-0.5 rounded"
+              className="text-sm hover:scale-130 transition-transform p-1 rounded-lg bg-black/40 hover:bg-black/70 border border-border/40 flex-shrink-0"
             >
               {emoji}
             </button>
           ))}
         </div>
 
-        <div className="chat-compose flex gap-1.5">
+        <div className="chat-compose flex items-center gap-2">
           <input
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder="Type a bid taunt or message..."
+            placeholder="Type a war-room taunt or message..."
             maxLength={180}
-            className="flex-1 bg-cinema/80 border border-border/70 rounded-lg px-2.5 py-1.5 text-xs text-cream outline-none focus:border-gold placeholder:text-muted-foreground/60"
+            className="flex-1 bg-black/60 border border-border/80 rounded-xl px-3.5 py-2.5 text-xs text-cream outline-none focus:border-gold focus:ring-1 focus:ring-gold placeholder:text-muted-foreground/60"
           />
           <button
             type="submit"
             disabled={!message.trim() || sending}
-            className="btn btn-primary px-3 py-1.5 text-xs rounded-lg disabled:opacity-40"
+            className="btn btn-primary px-4 py-2.5 text-xs font-black rounded-xl bg-gold text-black hover:brightness-110 disabled:opacity-30 flex items-center justify-center gap-1 flex-shrink-0"
+            title="Send Message"
           >
-            <Send size={13} />
+            <Send size={14} />
           </button>
         </div>
-        {error && <span className="chat-error text-[10px] text-red-400 mt-1 block">{error}</span>}
+        {error && <span className="chat-error text-[10px] text-red-400 mt-1.5 block text-left">{error}</span>}
       </form>
     </div>
   );

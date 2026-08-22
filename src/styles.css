@@ -268,7 +268,7 @@
   top: 55%;
 }
 .form-layout {
-  @apply mx-auto grid min-h-[calc(100vh-5rem)] max-w-6xl items-center gap-14 px-6 py-14 lg:grid-cols-2;
+  @apply mx-auto flex min-h-[calc(100vh-5rem)] max-w-4xl flex-col items-center justify-center gap-8 px-4 py-8 sm:py-14;
 }
 .game-form {
   @apply space-y-6 rounded-lg border border-border bg-panel p-6 sm:p-9;

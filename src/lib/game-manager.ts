@@ -4,11 +4,13 @@ import {
   getRandomizedMovieSlate,
   getRecommendedMoviePoolSize,
   movies,
+  type AuctionType,
   type Movie,
   type OwnedMovie,
   type Player,
   type RoomSettings,
 } from "./game-data";
+import { isOverseasPlayer, getOptimalPlaying11 } from "./cricket-data";
 import { supabase } from "@/integrations/supabase/client";
 import { generateAiMovieSlate, evaluatePortfoliosWithAi } from "./ai-evaluation";
 
@@ -46,6 +48,9 @@ export interface PlayerScore {
     genreSynergy: number;
     budgetEfficiency: number;
   };
+  fieldedItems?: OwnedMovie[];
+  captainId?: string;
+  viceCaptainId?: string;
 }
 
 export interface RoomState {
@@ -67,6 +72,8 @@ export interface RoomState {
   bidHistory: BidRecord[];
   chatMessages: ChatMsg[];
   portfolioRankings?: PlayerScore[] | undefined;
+  outPlayerIds: string[]; // List of player IDs who clicked OUT on current item
+  auctionType?: AuctionType;
 }
 
 export interface CurrentUser {
@@ -151,8 +158,8 @@ function registerRoomCode(code: string) {
 // 2. USER PROFILE & IDENTITY (PER-TAB SESSION ISOLATION)
 // -------------------------------------------------------------
 export const AVATAR_COLORS = [
+  "#f5c518", // gold
   "#e11d48", // rose
-  "#d97706", // amber
   "#2563eb", // blue
   "#16a34a", // green
   "#9333ea", // purple
@@ -179,11 +186,10 @@ export function getInitials(name: string): string {
 
 /**
  * Gets the current user for the active tab/session.
- * Uses sessionStorage so multiple tabs in the same browser are distinct players.
  */
 export function getCurrentUser(): CurrentUser {
   if (typeof window === "undefined") {
-    return { id: "p1", name: "Player 1", avatar: "P1", color: AVATAR_COLORS[0] || "#e11d48" };
+    return { id: "p1", name: "Franchise Owner", avatar: "FO", color: AVATAR_COLORS[0] || "#f5c518" };
   }
 
   try {
@@ -202,9 +208,9 @@ export function getCurrentUser(): CurrentUser {
     // ignore
   }
 
-  const randomColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)] || "#e11d48";
+  const randomColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)] || "#f5c518";
   const id = `user_${Math.random().toString(36).slice(2, 9)}`;
-  const name = savedName || "Movie Producer";
+  const name = savedName || "Franchise Owner";
   const newUser: CurrentUser = {
     id,
     name,
@@ -223,9 +229,9 @@ export function getCurrentUser(): CurrentUser {
 
 export function setCurrentUser(user: Partial<CurrentUser> & { name: string }): CurrentUser {
   const current = getCurrentUser();
-  const name = user.name.trim() || current.name || "Cinephile";
+  const name = user.name.trim() || current.name || "Franchise Owner";
   const avatar = getInitials(name);
-  const color = user.color || current.color || AVATAR_COLORS[0] || "#e11d48";
+  const color = user.color || current.color || AVATAR_COLORS[0] || "#f5c518";
   const id = user.id || current.id || `user_${Math.random().toString(36).slice(2, 9)}`;
 
   const updated: CurrentUser = {
@@ -248,16 +254,17 @@ export function setCurrentUser(user: Partial<CurrentUser> & { name: string }): C
 }
 
 // -------------------------------------------------------------
-// 3. BOT PROFILES
+// 3. BOT PROFILES (NO TEAM NAMES!)
 // -------------------------------------------------------------
 export const BOT_PROFILES = [
+  { name: "Apex Bidder", avatar: "AB", style: "Aggressive Marquee Hunter" },
+  { name: "Tactical Titan", avatar: "TT", style: "Value & Stats Focused" },
+  { name: "Crown Bidder", avatar: "CB", style: "High-Budget Anchor" },
+  { name: "Thunder Strikers", avatar: "TS", style: "Pace & Power Focus" },
   { name: "Karan J.", avatar: "KJ", style: "Blockbusters & Star Power" },
-  { name: "Zoya A.", avatar: "ZA", style: "Indie Gems & Drama" },
-  { name: "Rohit S.", avatar: "RS", style: "High-Octane Mass Action" },
-  { name: "Anurag K.", avatar: "AK", style: "Gritty Crime & Thrillers" },
-  { name: "S.S. Raj", avatar: "SR", style: "Epic Scale & Big Bids" },
-  { name: "Deepika P.", avatar: "DP", style: "Balanced Acclaim" },
-  { name: "Shah Rukh", avatar: "SRK", style: "Unstoppable Crown Bidder" },
+  { name: "Zoya A.", avatar: "ZA", style: "Indie Gems & Strategic Depth" },
+  { name: "Rohit S.", avatar: "RS", style: "High-Octane Action & Hype" },
+  { name: "Anurag K.", avatar: "AK", style: "Gritty Value Seeker" },
 ];
 
 // -------------------------------------------------------------
@@ -281,8 +288,10 @@ export function createRoom(
   settings: Partial<RoomSettings> = {},
 ): RoomState {
   const code = generateUniqueRoomCode();
+  const auctionType: AuctionType = settings.auctionType || "CINEMA";
   const roomSettings: RoomSettings = {
     ...DEFAULT_ROOM_SETTINGS,
+    auctionType,
     totalMovies: 15,
     ...settings,
   };
@@ -302,9 +311,13 @@ export function createRoom(
     ready: true,
   };
 
-  // Randomized movie pool with at least 15 movies (scaled for players)
-  const poolSize = getRecommendedMoviePoolSize(roomSettings.maxPlayers || 4);
-  const moviePool = getRandomizedMovieSlate(Math.max(15, poolSize), roomSettings.category || "ALL");
+  // Randomized item pool scaled for player count and auction type (IPL squad requires 12-18 players)
+  const poolSize = getRecommendedMoviePoolSize(roomSettings.maxPlayers || 4, auctionType);
+  const moviePool = getRandomizedMovieSlate(
+    Math.max(15, poolSize),
+    roomSettings.category || "ALL",
+    auctionType,
+  );
   const firstMovie = moviePool[0];
 
   const newRoom: RoomState = {
@@ -328,6 +341,8 @@ export function createRoom(
     isSold: false,
     bidHistory: [],
     chatMessages: [],
+    outPlayerIds: [],
+    auctionType,
   };
 
   saveRoom(newRoom);
@@ -355,6 +370,7 @@ export async function generateAndSetAiMoviePool(
       room.currentBidderId = null;
       room.currentBidderName = null;
       room.isSold = false;
+      room.outPlayerIds = [];
       room.secondsRemaining = room.settings.auctionSeconds;
 
       saveRoom(room);
@@ -530,7 +546,7 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
         user_id: p.id,
         name: p.name,
         avatar: p.avatar,
-        color: p.color || "#e11d48",
+        color: p.color || "#f5c518",
         budget: p.budget,
         initial_budget: p.initialBudget,
         is_host: p.isHost ?? false,
@@ -550,7 +566,10 @@ export function getRoom(roomCode: string): RoomState | null {
   try {
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${roomCode.toUpperCase()}`);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed.outPlayerIds) parsed.outPlayerIds = [];
+      if (!parsed.auctionType) parsed.auctionType = parsed.settings?.auctionType || "CINEMA";
+      return parsed;
     }
   } catch (e) {
     console.error("Failed to parse room data", e);
@@ -608,7 +627,7 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       avatar: getInitials(m.player_name),
       text: m.body,
       timestamp: new Date(m.created_at).getTime(),
-      isSystem: m.player_name === "System" || m.player_name === "Cinebid Host",
+      isSystem: m.player_name === "System" || m.player_name === "Auction Host",
     }));
 
     const mappedBids: BidRecord[] = (remoteBids || []).map((b: any) => ({
@@ -627,7 +646,6 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       if (!chatMap.has(m.id)) chatMap.set(m.id, m);
     });
 
-    // Merge bid history uniquely
     const bidMap = new Map<string, BidRecord>();
     mappedBids.forEach((b) => bidMap.set(b.id, b));
     (local?.bidHistory || []).forEach((b) => {
@@ -635,7 +653,6 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
     });
     const mergedBids = Array.from(bidMap.values()).sort((a, b) => b.amount - a.amount);
 
-    // Monotonic bid protection: never downgrade a higher local bid on active round
     let finalBid = Number(remoteRoom.current_bid);
     let finalBidderId = remoteRoom.current_bidder_id;
     let finalBidderName = remoteRoom.current_bidder_name;
@@ -650,10 +667,13 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       finalBidderName = local.currentBidderName;
     }
 
+    const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
+    const auctionType: AuctionType = settings.auctionType || local?.auctionType || "CINEMA";
+
     const parsedRoom: RoomState = {
       roomCode: remoteRoom.room_code,
       createdAt: new Date(remoteRoom.created_at).getTime(),
-      settings: (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS,
+      settings,
       hostId: remoteRoom.host_id,
       hostName: remoteRoom.host_name,
       status: remoteRoom.status as any,
@@ -667,6 +687,8 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       isSold: remoteRoom.is_sold,
       bidHistory: mergedBids,
       chatMessages: Array.from(chatMap.values()).sort((a, b) => a.timestamp - b.timestamp),
+      outPlayerIds: local?.outPlayerIds || [],
+      auctionType,
     };
 
     saveRoom(parsedRoom, true);
@@ -703,7 +725,6 @@ export function subscribeToMultiplayerRoom(
   if (typeof window === "undefined") return () => {};
   const code = roomCode.toUpperCase();
 
-  // 1. Local event listener
   const handleLocalUpdate = (e: Event) => {
     const customEvent = e as CustomEvent<{ roomCode: string; room?: RoomState }>;
     if (customEvent.detail?.roomCode === code) {
@@ -714,7 +735,6 @@ export function subscribeToMultiplayerRoom(
 
   window.addEventListener("cinebid_room_update", handleLocalUpdate);
 
-  // 2. Supabase Realtime channel subscription (.on handlers BEFORE .subscribe)
   const channelName = `cinebid_realtime_${code}`;
   const channel = supabase.channel(channelName);
 
@@ -733,7 +753,6 @@ export function subscribeToMultiplayerRoom(
       if (payload.payload?.room?.roomCode === code) {
         const fresh = payload.payload.room as RoomState;
         const current = getRoom(code);
-        // Protect higher bid in the same round
         if (
           current &&
           current.currentMovieIndex === fresh.currentMovieIndex &&
@@ -748,6 +767,13 @@ export function subscribeToMultiplayerRoom(
       }
     })
     .on("broadcast", { event: "bid_placed" }, (payload: any) => {
+      if (payload.payload?.room?.roomCode === code) {
+        const fresh = payload.payload.room as RoomState;
+        saveRoom(fresh, true);
+        onUpdate(fresh);
+      }
+    })
+    .on("broadcast", { event: "player_out" }, (payload: any) => {
       if (payload.payload?.room?.roomCode === code) {
         const fresh = payload.payload.room as RoomState;
         saveRoom(fresh, true);
@@ -859,19 +885,21 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
     };
     room.players.push(newPlayer);
 
-    // Dynamically scale movie pool to satisfy the 5-movie minimum per player
-    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length);
+    // Dynamically scale pool to satisfy squad/slate quota
+    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length, room.auctionType || "CINEMA");
     if (room.moviePool.length < targetPoolSize) {
+      const extraItems = getRandomizedMovieSlate(
+        targetPoolSize,
+        room.settings.category || "ALL",
+        room.auctionType || "CINEMA",
+      );
       const existingIds = new Set(room.moviePool.map((m) => m.id));
-      const remainingMovies = movies.filter((m) => !existingIds.has(m.id));
-      for (let i = remainingMovies.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const temp = remainingMovies[i]!;
-        remainingMovies[i] = remainingMovies[j]!;
-        remainingMovies[j] = temp;
+      for (const item of extraItems) {
+        if (!existingIds.has(item.id)) {
+          room.moviePool.push(item);
+          existingIds.add(item.id);
+        }
       }
-      const needed = targetPoolSize - room.moviePool.length;
-      room.moviePool.push(...remainingMovies.slice(0, needed));
       room.settings.totalMovies = room.moviePool.length;
     }
   }
@@ -898,6 +926,7 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
   }
 
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
+
   if (playerIndex >= 0 && room.players[playerIndex]) {
     room.players[playerIndex]!.name = user.name;
     room.players[playerIndex]!.avatar = user.avatar;
@@ -917,19 +946,20 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
     };
     room.players.push(newPlayer);
 
-    // Dynamically scale movie pool to satisfy the 5-movie minimum per player
-    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length);
+    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length, room.auctionType || "CINEMA");
     if (room.moviePool.length < targetPoolSize) {
+      const extraItems = getRandomizedMovieSlate(
+        targetPoolSize,
+        room.settings.category || "ALL",
+        room.auctionType || "CINEMA",
+      );
       const existingIds = new Set(room.moviePool.map((m) => m.id));
-      const remainingMovies = movies.filter((m) => !existingIds.has(m.id));
-      for (let i = remainingMovies.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        const temp = remainingMovies[i]!;
-        remainingMovies[i] = remainingMovies[j]!;
-        remainingMovies[j] = temp;
+      for (const item of extraItems) {
+        if (!existingIds.has(item.id)) {
+          room.moviePool.push(item);
+          existingIds.add(item.id);
+        }
       }
-      const needed = targetPoolSize - room.moviePool.length;
-      room.moviePool.push(...remainingMovies.slice(0, needed));
       room.settings.totalMovies = room.moviePool.length;
     }
   }
@@ -939,8 +969,6 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
   return room;
 }
 
-// -------------------------------------------------------------
-// 7. LIVE BIDDING & BOT ENGINE
 // -------------------------------------------------------------
 export function placeBid(
   roomCode: string,
@@ -957,6 +985,33 @@ export function placeBid(
   const player = room.players.find((p) => p.id === playerId);
   if (!player) return { success: false, message: "Player not found in room." };
 
+  // If player clicked OUT, they cannot bid on this round
+  if (room.outPlayerIds?.includes(playerId)) {
+    return { success: false, message: "You called OUT and cannot bid on this item." };
+  }
+
+  const currentMovie = room.moviePool[room.currentMovieIndex] || movies[0];
+  const isCricket = room.auctionType === "CRICKET" || Boolean(currentMovie?.role);
+
+  // IPL Rule 1: Maximum 18 players in squad
+  if (isCricket && player.movies.length >= 18) {
+    return {
+      success: false,
+      message: "Squad limit reached (18/18 players). You cannot acquire more players.",
+    };
+  }
+
+  // IPL Rule 2: Maximum 7 foreign / overseas players in squad (max 4 allowed in Playing 11)
+  if (isCricket && currentMovie && isOverseasPlayer(currentMovie)) {
+    const currentOverseasCount = player.movies.filter((m) => isOverseasPlayer(m)).length;
+    if (currentOverseasCount >= 7) {
+      return {
+        success: false,
+        message: "Squad overseas limit reached (7/7). You can only bid on Indian players.",
+      };
+    }
+  }
+
   const newBid = isAbsolute ? amountOrIncrement : room.currentBid + amountOrIncrement;
 
   if (newBid <= room.currentBid && room.currentBidderId !== null) {
@@ -968,8 +1023,6 @@ export function placeBid(
       message: `Insufficient budget (${formatCr(player.budget)} remaining).`,
     };
   }
-
-  const currentMovie = room.moviePool[room.currentMovieIndex] || movies[0];
 
   room.currentBid = newBid;
   room.currentBidderId = player.id;
@@ -1017,6 +1070,49 @@ export function placeBid(
   return { success: true, room };
 }
 
+/**
+ * Player clicks "OUT" (Pass/Withdraw).
+ * They cannot bid on this player/movie anymore.
+ * If all competitors have clicked OUT, the item is awarded immediately to the highest bidder (or unsold if no bids).
+ */
+export function playerPassOrOut(
+  roomCode: string,
+  playerId: string,
+): { success: boolean; room?: RoomState; isResolved?: boolean } {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return { success: false };
+  if (room.isSold || room.status !== "AUCTION") return { success: false };
+
+  if (!room.outPlayerIds) room.outPlayerIds = [];
+  if (!room.outPlayerIds.includes(playerId)) {
+    room.outPlayerIds.push(playerId);
+  }
+
+  // Check if round should conclude immediately:
+  // Active bidders = players not marked OUT
+  const activePlayers = room.players.filter((p) => !room.outPlayerIds.includes(p.id));
+
+  // Case 1: Someone placed a bid, and all OTHER players have marked OUT (active <= 1)
+  if (room.currentBidderId && activePlayers.length <= 1) {
+    const resolved = resolveCurrentAuction(room.roomCode);
+    return { success: true, room: resolved || room, isResolved: true };
+  }
+
+  // Case 2: No bids placed and EVERYONE in the room has marked OUT (active === 0)
+  if (!room.currentBidderId && activePlayers.length === 0) {
+    const resolved = resolveCurrentAuction(room.roomCode);
+    return { success: true, room: resolved || room, isResolved: true };
+  }
+
+  saveRoom(room);
+  void broadcastRoomState(room, "player_out", { playerId });
+  return { success: true, room, isResolved: false };
+}
+
+/**
+ * Intelligent Bot Simulation with realistic "OUT" decisions and IPL squad/overseas constraints
+ */
 export function simulateBotBid(
   roomOrCode: RoomState | string,
 ): { didBid: boolean; botName?: string; newBid?: number; room?: RoomState } {
@@ -1025,11 +1121,16 @@ export function simulateBotBid(
   if (!room) return { didBid: false };
   if (room.isSold || room.status !== "AUCTION") return { didBid: false };
 
+  if (!room.outPlayerIds) room.outPlayerIds = [];
+
   const currentMovie = room.moviePool[room.currentMovieIndex];
   if (!currentMovie) return { didBid: false };
 
+  const isCricket = room.auctionType === "CRICKET" || Boolean(currentMovie?.role);
+  const isOverseas = isCricket && isOverseasPlayer(currentMovie);
+
   const eligibleBots = room.players.filter(
-    (p) => p.isBot && p.id !== room.currentBidderId && p.budget > room.currentBid + 1,
+    (p) => p.isBot && p.id !== room.currentBidderId && !room.outPlayerIds.includes(p.id),
   );
 
   if (eligibleBots.length === 0) return { didBid: false };
@@ -1037,11 +1138,48 @@ export function simulateBotBid(
   const bot = eligibleBots[Math.floor(Math.random() * eligibleBots.length)];
   if (!bot) return { didBid: false };
 
+  // Constraint 1: Squad max 18 players
+  if (isCricket && bot.movies.length >= 18) {
+    if (!room.outPlayerIds.includes(bot.id)) {
+      room.outPlayerIds.push(bot.id);
+      saveRoom(room);
+    }
+    return { didBid: false };
+  }
+
+  // Constraint 2: Max 7 overseas players in squad
+  if (isOverseas) {
+    const botOverseasCount = bot.movies.filter((m) => isOverseasPlayer(m)).length;
+    if (botOverseasCount >= 7) {
+      if (!room.outPlayerIds.includes(bot.id)) {
+        room.outPlayerIds.push(bot.id);
+        saveRoom(room);
+      }
+      return { didBid: false };
+    }
+  }
+
   const maxWillingness = Math.round(
     currentMovie.basePrice * (1.1 + (currentMovie.imdbRating / 10) * 0.7) +
       (currentMovie.boxOffice > 500 ? 4 : 0),
   );
 
+  // If current price exceeds bot willingness or bot cannot afford next bid: bot marks OUT
+  if (room.currentBid >= maxWillingness || bot.budget < room.currentBid + 1) {
+    if (!room.outPlayerIds.includes(bot.id)) {
+      room.outPlayerIds.push(bot.id);
+      saveRoom(room);
+    }
+
+    // Check if only 1 active bidder remains
+    const activePlayers = room.players.filter((p) => !room.outPlayerIds.includes(p.id));
+    if (room.currentBidderId && activePlayers.length <= 1) {
+      resolveCurrentAuction(room.roomCode);
+    }
+    return { didBid: false };
+  }
+
+  // Bot places a bid
   if (room.currentBid < maxWillingness && bot.budget >= room.currentBid + 1) {
     const increment = Math.random() > 0.65 ? 2 : 1;
     const bidVal = Math.min(room.currentBid + increment, bot.budget);
@@ -1106,96 +1244,18 @@ export function advanceToNextMovie(roomCode: string): RoomState | null {
   room.currentBidderId = null;
   room.currentBidderName = null;
   room.secondsRemaining = room.settings.auctionSeconds;
-  room.auctionEndTime = Date.now() + (room.settings.auctionSeconds * 1000);
+  room.auctionEndTime = Date.now() + room.settings.auctionSeconds * 1000;
   room.isSold = false;
   room.bidHistory = [];
+  room.outPlayerIds = []; // Reset "OUT" statuses for new item
 
   saveRoom(room);
   return room;
 }
 
 // -------------------------------------------------------------
-// 8. PORTFOLIO EVALUATION ALGORITHM
+// 8. PORTFOLIO & SQUAD EVALUATION ALGORITHM
 // -------------------------------------------------------------
-export function evaluatePortfolio(player: Player, selectedMovieIds?: string[]): PlayerScore {
-  const targetMovies = selectedMovieIds?.length
-    ? player.movies.filter((m) => selectedMovieIds.includes(m.id))
-    : player.movies.slice(0, 5);
-
-  const count = targetMovies.length;
-
-  if (count === 0) {
-    return {
-      playerId: player.id,
-      name: player.name,
-      avatar: player.avatar,
-      color: player.color || "#e11d48",
-      isHost: player.isHost,
-      score: Math.round((player.budget / player.initialBudget) * 35 * 10) / 10,
-      rank: 0,
-      wonCount: 0,
-      remainingBudget: player.budget,
-      critique: "No movies secured in the auction. Portfolio lacks theatrical presence.",
-      breakdown: { criticalAcclaim: 0, boxOfficeRoi: 0, genreSynergy: 0, budgetEfficiency: 10 },
-    };
-  }
-
-  // 1. Critical Acclaim (Max 40)
-  const avgImdb = targetMovies.reduce((acc, m) => acc + m.imdbRating, 0) / count;
-  const criticalAcclaim = Math.min(40, (avgImdb / 10) * 40 * (count >= 5 ? 1.0 : count / 5));
-
-  // 2. Box Office Power & ROI (Max 30)
-  const totalBoxOffice = targetMovies.reduce((acc, m) => acc + m.boxOffice, 0);
-  const totalSpent = targetMovies.reduce((acc, m) => acc + m.purchasePrice, 0) || 1;
-  const roi = totalBoxOffice / totalSpent;
-  const boxOfficeScore = Math.min(18, (totalBoxOffice / 4000) * 18);
-  const roiScore = Math.min(12, (roi / 40) * 12);
-  const boxOfficeRoi = boxOfficeScore + roiScore;
-
-  // 3. Genre Diversity & Synergy (Max 20)
-  const allGenres = new Set<string>();
-  targetMovies.forEach((m) => m.genres.forEach((g) => allGenres.add(g)));
-  const uniqueGenreCount = allGenres.size;
-  const genreSynergy = Math.min(20, (uniqueGenreCount / 5) * 20);
-
-  // 4. Capital Efficiency (Max 10)
-  const budgetEfficiency = Math.min(10, (player.budget / player.initialBudget) * 10);
-
-  const totalScore =
-    Math.round((criticalAcclaim + boxOfficeRoi + genreSynergy + budgetEfficiency) * 10) / 10;
-
-  let critique = "";
-  const topMovie = [...targetMovies].sort((a, b) => b.boxOffice - a.boxOffice)[0];
-  const highestRated = [...targetMovies].sort((a, b) => b.imdbRating - a.imdbRating)[0];
-
-  if (totalScore >= 88) {
-    critique = `A masterclass in cinematic curation! Anchored by ${highestRated?.title} (${highestRated?.imdbRating}★) and blockbuster powerhouse ${topMovie?.title} (${formatCr(topMovie?.boxOffice || 0)} worldwide). Exceptional genre harmony with ₹${player.budget} Cr capital retained.`;
-  } else if (totalScore >= 75) {
-    critique = `Formidable studio portfolio featuring iconic titles like ${topMovie?.title}. Strong box-office muscle coupled with sharp bidding discipline.`;
-  } else {
-    critique = `A bold boutique slate led by ${highestRated?.title}. With broader genre representation, this lineup will dominate award seasons.`;
-  }
-
-  return {
-    playerId: player.id,
-    name: player.name,
-    avatar: player.avatar,
-    color: player.color || "#e11d48",
-    isHost: player.isHost,
-    score: totalScore,
-    rank: 1,
-    wonCount: player.movies.length,
-    remainingBudget: player.budget,
-    critique,
-    breakdown: {
-      criticalAcclaim: Math.round(criticalAcclaim * 10) / 10,
-      boxOfficeRoi: Math.round(boxOfficeRoi * 10) / 10,
-      genreSynergy: Math.round(genreSynergy * 10) / 10,
-      budgetEfficiency: Math.round(budgetEfficiency * 10) / 10,
-    },
-  };
-}
-
 export async function evaluateAllRoomPlayers(
   roomCode: string,
   userSelectedTop5?: string[],
@@ -1210,7 +1270,22 @@ export async function evaluateAllRoomPlayers(
     userMap[user.id] = userSelectedTop5;
   }
 
-  const scores = await evaluatePortfoliosWithAi(room.players, userMap);
+  // Automatically compute optimal Playing 11 (max 4 overseas, 1 WK, balanced roles) for bots and unselected players
+  const isCricket = room.auctionType === "CRICKET" || room.players.some((p) => p.movies.some((m) => m.auctionType === "CRICKET" || m.role));
+  if (isCricket) {
+    room.players.forEach((p) => {
+      if (p.isBot || !userMap[p.id] || userMap[p.id]!.length === 0) {
+        const optimal = getOptimalPlaying11(p.movies);
+        userMap[p.id] = optimal.playing11;
+      }
+    });
+  }
+
+  const scores = await evaluatePortfoliosWithAi(
+    room.players,
+    userMap,
+    room.auctionType || "CINEMA",
+  );
 
   room.portfolioRankings = scores;
   room.status = "RESULTS";
@@ -1233,7 +1308,7 @@ export async function evaluateAllRoomPlayers(
     }));
     await (supabase.from("room_rankings") as any).upsert(rankingRows, { onConflict: "id" });
   } catch {
-    // Ignore schema sync error if offline
+    // Ignore offline
   }
 
   return scores;
