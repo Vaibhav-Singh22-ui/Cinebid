@@ -21,8 +21,6 @@ import {
   Star,
   Trophy,
   Users,
-  UserPlus,
-  UserMinus,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -49,9 +47,13 @@ import {
   type OwnedMovie,
   type Player,
 } from "@/lib/game-data";
-import { cricketPlayers, isOverseasPlayer, getOptimalPlaying11 } from "@/lib/cricket-data";
 import {
-  addBotToRoom,
+  cricketPlayers,
+  isOverseasPlayer,
+  getOptimalPlaying11,
+  getRandomizedCricketSlate,
+} from "@/lib/cricket-data";
+import {
   advanceToNextMovie,
   broadcastRoomState,
   createRoom,
@@ -64,11 +66,9 @@ import {
   joinRoomAsync,
   placeBid,
   playerPassOrOut,
-  removeBotFromRoom,
   resolveCurrentAuction,
   saveRoom,
   setCurrentUser,
-  simulateBotBid,
   subscribeToMultiplayerRoom,
   type PlayerScore,
   type RoomState,
@@ -91,209 +91,243 @@ function StarDot() {
 }
 
 // -------------------------------------------------------------
-// 1. HOME / LANDING SCREEN
+// 1. HOME / LANDING SCREEN (CLEAN DUAL-GAME HUB)
 // -------------------------------------------------------------
 export function HomeScreen() {
   const navigate = useNavigate();
-  const [user, setUser] = useState<{ name: string; color: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<AuctionType>("CRICKET");
+  const [quickCode, setQuickCode] = useState("");
+  const [quickName, setQuickName] = useState("");
+  const [quickError, setQuickError] = useState("");
+  const [quickLoading, setQuickLoading] = useState(false);
 
   useEffect(() => {
-    setUser(getCurrentUser());
+    const user = getCurrentUser();
+    if (user.name && user.name !== "Player 1" && user.name !== "Franchise Owner" && user.name !== "Movie Producer") {
+      setQuickName(user.name);
+    }
   }, []);
 
-  const handleStartCustom = (type: AuctionType = activeTab) => {
-    navigate({ to: "/create" });
-  };
-
-  const handleJoin = () => {
-    navigate({ to: "/join" });
+  const handleQuickJoin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cName = quickName.trim() || "Player";
+    const cCode = quickCode.trim().toUpperCase();
+    if (!cCode) {
+      setQuickError("Please enter a valid room code.");
+      return;
+    }
+    setQuickLoading(true);
+    setQuickError("");
+    try {
+      setCurrentUser({ name: cName });
+      await joinRoomAsync(cCode, cName);
+      navigate({ to: "/room/$roomCode", params: { roomCode: cCode } });
+    } catch (err: any) {
+      setQuickError(err?.message || "Failed to join room.");
+    } finally {
+      setQuickLoading(false);
+    }
   };
 
   return (
     <Page>
-      <main className="home-layout max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-12 flex flex-col gap-10">
+      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-8 sm:py-12 flex flex-col gap-10 w-full">
         {/* Hero Section */}
-        <section className="hero relative overflow-hidden rounded-3xl border border-border/80 bg-panel/90 shadow-2xl p-6 sm:p-12">
-          <div className="absolute inset-0 bg-gradient-to-r from-panel via-panel/85 to-transparent z-10 pointer-events-none" />
+        <section className="text-center flex flex-col items-center gap-3">
+          <GameStatus icon={<StarDot />}>Multiplayer Live Bidding Arenas</GameStatus>
+          <h1 className="text-4xl sm:text-6xl font-black text-cream font-display tracking-tight leading-[1.08]">
+            CHOOSE YOUR <span className="text-gold">AUCTION ARENA</span>
+          </h1>
+          <p className="text-sm sm:text-base text-muted-foreground max-w-2xl">
+            Two distinct high-stakes bidding experiences. Bid on legendary cinematic blockbusters or build an IPL cricket franchise squad.
+          </p>
+        </section>
 
-          {/* Theme Selector Toggle */}
-          <div className="relative z-20 flex items-center justify-center sm:justify-start gap-2 mb-6">
-            <div className="inline-flex p-1 rounded-2xl bg-black/60 border border-border">
+        {/* Two Dedicated Game Portals */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 items-stretch">
+          {/* Game 1: Cinebid Movie Auction */}
+          <div className="group relative overflow-hidden rounded-3xl border border-gold/40 bg-gradient-to-b from-panel via-panel-strong to-black/90 p-6 sm:p-8 flex flex-col justify-between gap-6 shadow-2xl hover:border-gold transition-all">
+            <div className="flex flex-col gap-4">
+              <div className="w-full aspect-[16/9] rounded-2xl overflow-hidden relative shadow-lg bg-black">
+                <img
+                  src={cinemaHero}
+                  alt="Cinebid Cinema Auction"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent flex items-end p-4">
+                  <span className="px-3 py-1 rounded-full bg-gold/20 backdrop-blur-md border border-gold/40 text-gold text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                    <Film size={13} /> 44+ Iconic Theatrical Blockbusters
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-left">
+                <h2 className="text-2xl sm:text-3xl font-black text-cream font-display">
+                  CINEBID <span className="text-gold">MOVIE AUCTION</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-2 leading-relaxed">
+                  Bid in real-time on iconic Bollywood, South Pan-India, and Hollywood blockbusters. Build a 5-film studio slate, optimize IMDb critical acclaim and box office yield to win the Grand Jury Championship.
+                </p>
+
+                <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Slate Size</span>
+                    <strong className="text-xs font-black text-cream">5 Movies</strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Categories</span>
+                    <strong className="text-xs font-black text-gold">4 Cinema Sets</strong>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Evaluation</span>
+                    <strong className="text-xs font-black text-cyan-400">Grand Jury</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setActiveTab("CRICKET")}
-                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                  activeTab === "CRICKET"
-                    ? "bg-gold text-black shadow-lg shadow-gold/20"
-                    : "text-muted-foreground hover:text-cream"
-                }`}
+                onClick={() => navigate({ to: "/create", search: { game: "cinema" } })}
+                className="btn btn-primary w-full sm:flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-gold/20 hover:brightness-110 flex items-center justify-center gap-2"
               >
-                <span>🏏</span> IPL Mega Auction
+                <Gavel size={16} /> Create Movie Auction
               </button>
               <button
                 type="button"
-                onClick={() => setActiveTab("CINEMA")}
-                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                  activeTab === "CINEMA"
-                    ? "bg-red text-cream shadow-lg shadow-red/20"
-                    : "text-muted-foreground hover:text-cream"
-                }`}
+                onClick={() => navigate({ to: "/join" })}
+                className="btn btn-secondary w-full sm:w-auto px-6 py-3.5 rounded-2xl border border-border/80 bg-panel hover:bg-panel-strong font-display font-bold text-xs uppercase tracking-wider text-cream flex items-center justify-center gap-2"
               >
-                <span>🎬</span> Movie Cinema
+                <Play size={14} fill="currentColor" /> Join Room
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-20">
-            <div className="lg:col-span-7 flex flex-col gap-4 text-center sm:text-left items-center sm:items-start">
-              <div className="flex justify-center sm:justify-start">
-                <GameStatus icon={<StarDot />}>
-                  {activeTab === "CRICKET"
-                    ? "IPL Mega Auction Format • 12-18 Squad • Up to 7 Overseas (Max 4 in 11)"
-                    : "Live Multiplayer • Official Movie Posters"}
-                </GameStatus>
+          {/* Game 2: IPL Mega Auction */}
+          <div className="group relative overflow-hidden rounded-3xl border border-cyan-500/40 bg-gradient-to-b from-panel via-panel-strong to-black/90 p-6 sm:p-8 flex flex-col justify-between gap-6 shadow-2xl hover:border-cyan-400 transition-all">
+            <div className="flex flex-col gap-4">
+              <div className="w-full aspect-[16/9] rounded-2xl overflow-hidden relative shadow-lg bg-black">
+                <img
+                  src={cricketHero}
+                  alt="IPL Mega Auction"
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent flex items-end p-4">
+                  <span className="px-3 py-1 rounded-full bg-cyan-500/20 backdrop-blur-md border border-cyan-500/40 text-cyan-300 text-xs font-black uppercase tracking-wider flex items-center gap-1.5">
+                    <Zap size={13} /> 70+ Verified Cricketer Portraits & Stats
+                  </span>
+                </div>
               </div>
 
-              <h1 className="font-display font-black text-4xl sm:text-6xl text-cream tracking-tight leading-[1.08] text-center sm:text-left">
-                {activeTab === "CRICKET" ? (
-                  <>
-                    IPL MEGA AUCTION <span className="text-gold">& PLAYING 11</span> ARENA
-                  </>
-                ) : (
-                  <>
-                    THE LIVE <span className="text-gold">CINEMA MOVIE</span> AUCTION
-                  </>
-                )}
-              </h1>
+              <div className="text-left">
+                <h2 className="text-2xl sm:text-3xl font-black text-cream font-display">
+                  IPL MEGA <span className="text-cyan-400">AUCTION HUB</span>
+                </h2>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-2 leading-relaxed">
+                  High-stakes T20 franchise war-room with real cricketer portraits and stats. Build a 12-18 player squad with up to 7 overseas players. Field your best Playing 11 (max 4 overseas) and battle for the AI Championship Cup.
+                </p>
 
-              <p className="text-sm sm:text-base text-muted-foreground max-w-xl leading-relaxed text-center sm:text-left">
-                {activeTab === "CRICKET"
-                  ? "Build your IPL mega squad (12-18 superstars, up to 7 overseas players). Submit your championship Playing 11 (max 4 overseas), then AI evaluates winner and leaderboard rankings!"
-                  : "Bid in real-time against friends and franchise rivals for iconic box-office blockbusters. Curate a 5-film slate and claim the Festival Grand Prize."}
-              </p>
-
-              {/* IPL Rules Overview Callout */}
-              {activeTab === "CRICKET" && (
-                <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2.5 my-1 p-3.5 rounded-2xl bg-black/50 border border-gold/30 text-center sm:text-left">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase text-gold">1. Squad Limits</span>
-                    <strong className="text-xs text-cream mt-0.5">Min 12 & Max 18 Players</strong>
+                <div className="grid grid-cols-3 gap-2 mt-4 text-center">
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Squad Quota</span>
+                    <strong className="text-xs font-black text-cream">12–18 Players</strong>
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase text-gold">2. Foreign Quota</span>
-                    <strong className="text-xs text-cream mt-0.5">Up to 7 in Squad (4 in 11)</strong>
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Overseas</span>
+                    <strong className="text-xs font-black text-cyan-300">Max 7 (4 in 11)</strong>
                   </div>
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-bold uppercase text-gold">3. AI Evaluation</span>
-                    <strong className="text-xs text-cream mt-0.5">Field Playing 11 vs AI Jury</strong>
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-border/70">
+                    <span className="text-[10px] text-muted-foreground font-bold uppercase block">Tournament</span>
+                    <strong className="text-xs font-black text-gold">AI Simulation</strong>
                   </div>
                 </div>
-              )}
-
-              {/* Action Buttons: Centered on mobile devices! */}
-              <div className="w-full flex flex-col sm:flex-row items-center justify-center sm:justify-start gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleStartCustom(activeTab)}
-                  className="btn btn-primary w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-gold/20 hover:brightness-110 flex items-center justify-center gap-2"
-                >
-                  <Gavel size={18} /> Create Auction Room
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleJoin}
-                  className="btn btn-secondary w-full sm:w-auto px-7 py-3.5 rounded-2xl border border-border/80 bg-panel hover:bg-panel-strong font-display font-bold text-sm uppercase tracking-wider text-cream flex items-center justify-center gap-2 hover:border-gold/50"
-                >
-                  <Play size={16} fill="currentColor" /> Join with Code
-                </button>
               </div>
             </div>
 
-            <div className="lg:col-span-5 flex justify-center">
-              <div className="w-full max-w-sm aspect-[4/3] rounded-2xl overflow-hidden border border-border/80 shadow-2xl relative bg-black">
-                <img
-                  src={activeTab === "CRICKET" ? cricketHero : cinemaHero}
-                  alt="Auction Hero Artwork"
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-4">
-                  <div className="text-left">
-                    <span className="text-xs text-gold font-bold flex items-center gap-1 uppercase tracking-wider">
-                      <Sparkles size={13} /> {activeTab === "CRICKET" ? "70+ Real Cricketer Photos" : "44+ Iconic Theatrical Blockbusters"}
-                    </span>
-                    <strong className="block text-cream text-base font-black">
-                      {activeTab === "CRICKET" ? "IPL Mega Auction & Playing 11 Challenge" : "Grand Film Festival Studio Slate"}
-                    </strong>
-                  </div>
-                </div>
-              </div>
+            <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => navigate({ to: "/create", search: { game: "cricket" } })}
+                className="btn btn-primary w-full sm:flex-1 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 text-black font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-cyan-500/20 hover:brightness-110 flex items-center justify-center gap-2"
+              >
+                <Gavel size={16} /> Create IPL Auction
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate({ to: "/join" })}
+                className="btn btn-secondary w-full sm:w-auto px-6 py-3.5 rounded-2xl border border-border/80 bg-panel hover:bg-panel-strong font-display font-bold text-xs uppercase tracking-wider text-cream flex items-center justify-center gap-2"
+              >
+                <Play size={14} fill="currentColor" /> Join Room
+              </button>
             </div>
           </div>
         </section>
 
-        {/* Live Preview Showcase */}
-        <section className="flex flex-col gap-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <h2 className="text-xl sm:text-2xl font-black text-cream font-display">
-                {activeTab === "CRICKET" ? "🏏 Real Cricketers (Batsmen, Bowlers & All-Rounders)" : "🎬 Featured Theatrical Masterpieces"}
+        {/* Quick Join Bar */}
+        <section className="w-full max-w-xl mx-auto p-5 rounded-3xl bg-panel/90 border border-border/80 shadow-xl text-center">
+          <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block mb-2">
+            Have a room invitation code?
+          </span>
+          <form onSubmit={handleQuickJoin} className="flex flex-col sm:flex-row items-center gap-2.5">
+            <input
+              type="text"
+              value={quickName}
+              onChange={(e) => setQuickName(e.target.value)}
+              placeholder="Your Name"
+              className="w-full sm:w-1/3 px-4 py-2.5 rounded-xl bg-black/50 border border-border text-xs text-cream placeholder:text-muted-foreground"
+            />
+            <input
+              type="text"
+              value={quickCode}
+              onChange={(e) => setQuickCode(e.target.value.toUpperCase())}
+              placeholder="Room Code (e.g. CINE-78)"
+              className="w-full sm:flex-1 px-4 py-2.5 rounded-xl bg-black/50 border border-border font-mono font-bold text-xs uppercase text-gold placeholder:text-muted-foreground"
+            />
+            <button
+              type="submit"
+              disabled={quickLoading}
+              className="btn btn-primary w-full sm:w-auto px-6 py-2.5 rounded-xl bg-gold text-black font-bold text-xs uppercase flex items-center justify-center gap-1.5"
+            >
+              {quickLoading ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} fill="black" />} Join
+            </button>
+          </form>
+          {quickError && <p className="text-xs text-red-400 mt-2">{quickError}</p>}
+        </section>
+
+        {/* Showcase Previews */}
+        <section className="flex flex-col gap-8">
+          {/* Cinema Showcase */}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl sm:text-2xl font-black text-cream font-display flex items-center gap-2">
+                <span>🎬</span> Featured Theatrical Masterpieces
               </h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {activeTab === "CRICKET"
-                  ? "Real high-resolution portraits from Wikimedia Commons & open archives with verified career stats, impact ratings, and nationality quotas."
-                  : "Verified high-resolution official posters with global box office and IMDb ratings."}
-              </p>
+              <Link to="/create" search={{ game: "cinema" }} className="text-xs text-gold hover:underline font-bold">
+                Play Movie Auction →
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+              {movies.slice(0, 6).map((m) => (
+                <MovieCard key={m.id} movie={m} />
+              ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5">
-            {activeTab === "CRICKET"
-              ? cricketPlayers.slice(0, 12).map((player) => (
-                  <div
-                    key={player.id}
-                    className="group rounded-2xl overflow-hidden border border-border/80 bg-panel hover:border-gold/50 transition-all p-2.5 flex flex-col gap-2 shadow-md"
-                  >
-                    <div className="aspect-[3/4] rounded-xl overflow-hidden relative bg-black/40">
-                      <Poster movie={{ ...player, auctionType: "CRICKET" }} className="w-full h-full" />
-                    </div>
-                    <div>
-                      <strong className="block text-xs font-bold text-cream truncate group-hover:text-gold transition-colors">
-                        {player.title}
-                      </strong>
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-0.5">
-                        <span className="text-cyan-400 font-bold">★ {player.imdbRating}</span>
-                        <span className="text-gold font-bold font-mono">Base: {formatCr(player.basePrice)}</span>
-                      </div>
-                      <span className="block text-[10px] text-muted-foreground truncate mt-0.5">
-                        {player.genre} • {player.director}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              : movies.slice(0, 12).map((movie) => (
-                  <div
-                    key={movie.id}
-                    className="group rounded-2xl overflow-hidden border border-border/80 bg-panel hover:border-gold/50 transition-all p-2.5 flex flex-col gap-2 shadow-md"
-                  >
-                    <div className="aspect-[3/4] rounded-xl overflow-hidden relative bg-black/40">
-                      <Poster movie={movie} className="w-full h-full" />
-                    </div>
-                    <div>
-                      <strong className="block text-xs font-bold text-cream truncate group-hover:text-gold transition-colors">
-                        {movie.title}
-                      </strong>
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground mt-0.5">
-                        <span className="text-yellow-400 font-bold">★ {movie.imdbRating}</span>
-                        <span className="text-gold font-bold font-mono">Base: {formatCr(movie.basePrice)}</span>
-                      </div>
-                      <span className="block text-[10px] text-muted-foreground truncate mt-0.5">
-                        {movie.year} • {movie.director}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+          {/* Cricket Showcase */}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl sm:text-2xl font-black text-cream font-display flex items-center gap-2">
+                <span>🏏</span> Star IPL Cricketers & Real Stats
+              </h2>
+              <Link to="/create" search={{ game: "cricket" }} className="text-xs text-cyan-400 hover:underline font-bold">
+                Play IPL Auction →
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+              {cricketPlayers.slice(0, 6).map((p) => (
+                <MovieCard key={p.id} movie={{ ...p, auctionType: "CRICKET" }} />
+              ))}
+            </div>
           </div>
         </section>
       </main>
@@ -304,13 +338,29 @@ export function HomeScreen() {
 export { HomeScreen as LandingScreen };
 
 // -------------------------------------------------------------
-// 2. CREATE & JOIN FORM SCREEN (PERFECTLY CENTERED LAYOUT)
+// 2. CREATE & JOIN FORM SCREEN (SEPARATE TABS & CLEAN WORKFLOW)
 // -------------------------------------------------------------
-export function GameForm({ mode }: { mode: "create" | "join" }) {
+export function GameForm({
+  mode,
+  initialGame,
+}: {
+  mode: "create" | "join";
+  initialGame?: string;
+}) {
   const navigate = useNavigate();
+  const [auctionType, setAuctionType] = useState<AuctionType>(() => {
+    if (initialGame) {
+      return initialGame.toUpperCase() === "CRICKET" ? "CRICKET" : "CINEMA";
+    }
+    if (typeof window !== "undefined") {
+      const g = new URLSearchParams(window.location.search).get("game");
+      if (g?.toUpperCase() === "CRICKET") return "CRICKET";
+    }
+    return "CINEMA";
+  });
+
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [auctionType, setAuctionType] = useState<AuctionType>("CRICKET");
   const [max, setMax] = useState("4");
   const [budget, setBudget] = useState("100");
   const [seconds, setSeconds] = useState("30");
@@ -329,42 +379,39 @@ export function GameForm({ mode }: { mode: "create" | "join" }) {
   ];
 
   useEffect(() => {
-    const savedUser = getCurrentUser();
-    if (savedUser.name && savedUser.name !== "Franchise Owner" && savedUser.name !== "Movie Producer" && savedUser.name !== "Player 1") {
-      setName(savedUser.name);
+    const saved = getCurrentUser();
+    if (saved.name && saved.name !== "Franchise Owner" && saved.name !== "Movie Producer" && saved.name !== "Player 1") {
+      setName(saved.name);
     }
-    if (savedUser.color) {
-      setSelectedColor(savedUser.color);
-    }
+    if (saved.color) setSelectedColor(saved.color);
   }, []);
 
   const numMax = Math.max(2, Math.min(8, Number(max) || 4));
   const numBudget = Math.max(50, Math.min(500, Number(budget) || 100));
   const numSeconds = Math.max(15, Math.min(90, Number(seconds) || 30));
-  const totalItemsForCount = getRecommendedMoviePoolSize(numMax, auctionType);
-
-  const cricketCategories = [
-    { id: "ALL", title: "🏏 Full IPL Mega Auction Pool", subtitle: "All Batsmen, Bowlers, All-Rounders & Keepers" },
-    { id: "BATTERS", title: "🏏 Explosive Batsmen & Wicketkeepers", subtitle: "Top-order run machines, keepers & clutch finishers" },
-    { id: "BOWLERS", title: "🎯 Lethal Bowlers (Fast & Spin)", subtitle: "145+ km/h express pacers & mystery spinners" },
-    { id: "ALL_ROUNDERS", title: "⚡ Match-Winning All-Rounders", subtitle: "Dual-threat 3D superstars" },
-    { id: "FAST_BOWLERS", title: "⚡ Express Fast Bowlers Only", subtitle: "Yorker kings & powerplay swingers" },
-    { id: "SPINNERS", title: "🌀 Mystery Spinners & Magicians", subtitle: "Turn, drift, and middle-overs control" },
-  ];
+  const totalItems = getRecommendedMoviePoolSize(numMax, auctionType);
 
   const cinemaCategories = [
-    { id: "ALL", title: "🎬 All Studios & Global Cinema", subtitle: "Bollywood, South Pan-India, Hollywood & Masterpieces" },
-    { id: "BOLLYWOOD", title: "🔥 Bollywood & Hindi Mega Hits", subtitle: "YRF, Dharma, Red Chillies, T-Series (Jawan, Dangal, Sholay)" },
-    { id: "SOUTH_PAN_INDIA", title: "💥 South Pan-India Epics", subtitle: "RRR, Baahubali 2, KGF 2, Pushpa, Kantara, Kalki 2898 AD" },
-    { id: "HOLLYWOOD", title: "🚀 Hollywood & Global Blockbusters", subtitle: "Interstellar, Inception, Dark Knight, Oppenheimer, Titanic" },
-    { id: "MASTERPIECES", title: "🏆 Critically Acclaimed Masterpieces", subtitle: "Tumbbad, Gangs of Wasseypur, Andhadhun, Swades, Lagaan" },
+    { id: "ALL", title: "🎬 All Studios & Global Cinema", desc: "Bollywood, South Pan-India, Hollywood & Masterpieces" },
+    { id: "BOLLYWOOD", title: "🔥 Bollywood & Hindi Mega Hits", desc: "YRF, Dharma, Red Chillies (Jawan, Dangal, Sholay, Pathaan)" },
+    { id: "SOUTH_PAN_INDIA", title: "💥 South Pan-India Epics", desc: "RRR, Baahubali 2, KGF 2, Pushpa, Kantara, Kalki 2898 AD" },
+    { id: "HOLLYWOOD", title: "🚀 Hollywood & Global Blockbusters", desc: "Interstellar, Inception, Dark Knight, Oppenheimer, Titanic" },
+    { id: "MASTERPIECES", title: "🏆 Critically Acclaimed Masterpieces", desc: "Tumbbad, Gangs of Wasseypur, Andhadhun, Swades, Lagaan" },
   ];
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const cricketCategories = [
+    { id: "ALL", title: "🏏 Full IPL Mega Auction Pool", desc: "All Batsmen, Bowlers, All-Rounders & Wicketkeepers" },
+    { id: "BATTERS", title: "🏏 Explosive Batsmen & Wicketkeepers", desc: "Top-order run machines and clutch finishers" },
+    { id: "FAST_BOWLERS", title: "⚡ Express Fast Bowlers & Pacework", desc: "145+ km/h pacers and death-overs yorker specialists" },
+    { id: "SPINNERS", title: "🌀 Mystery Spinners & Magicians", desc: "Wrist spinners and middle-overs control bowlers" },
+    { id: "ALL_ROUNDERS", title: "⚡ Match-Winning All-Rounders", desc: "Dual-threat 3D players" },
+  ];
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     const cleanName = name.trim();
     if (!cleanName) {
-      setError("Please enter your franchise / bidder name to continue.");
+      setError(auctionType === "CRICKET" ? "Please enter your franchise name." : "Please enter your studio producer name.");
       return;
     }
 
@@ -376,286 +423,281 @@ export function GameForm({ mode }: { mode: "create" | "join" }) {
         setError("Please enter a valid room code.");
         return;
       }
-
       setLoading(true);
       setError("");
-
       try {
         const room = await joinRoomAsync(cleanCode, cleanName);
-
         if (room && room.players.length > room.settings.maxPlayers) {
           const isAlreadyIn = room.players.some((p) => p.name.toLowerCase() === cleanName.toLowerCase());
           if (!isAlreadyIn) {
-            setError(`Room ${cleanCode} is full (${room.settings.maxPlayers}/${room.settings.maxPlayers} players).`);
+            setError(`Room is full (${room.settings.maxPlayers}/${room.settings.maxPlayers} players).`);
             setLoading(false);
             return;
           }
         }
-
-        navigate({
-          to: "/room/$roomCode",
-          params: { roomCode: cleanCode },
-        });
-      } catch (e: any) {
-        setError(e?.message || "Failed to connect to room.");
+        navigate({ to: "/room/$roomCode", params: { roomCode: cleanCode } });
+      } catch (err: any) {
+        setError(err?.message || "Failed to join room.");
       } finally {
         setLoading(false);
       }
       return;
     }
 
+    // Create Room
     const room = createRoom(cleanName, {
       auctionType,
       maxPlayers: numMax,
       startingBudget: numBudget,
       auctionSeconds: numSeconds,
-      category: category,
-      totalMovies: totalItemsForCount,
+      category,
+      totalMovies: totalItems,
     });
 
-    navigate({
-      to: "/room/$roomCode",
-      params: { roomCode: room.roomCode },
-    });
+    navigate({ to: "/room/$roomCode", params: { roomCode: room.roomCode } });
   };
 
   return (
     <Page>
       <main className="form-layout flex-1 flex flex-col items-center justify-center min-h-[calc(100vh-65px)] py-8 sm:py-14 px-4 sm:px-8 w-full my-auto">
         <div className="w-full max-w-2xl mx-auto flex flex-col items-center justify-center my-auto">
-          <section className="form-card w-full bg-panel/95 border border-border/80 rounded-3xl p-6 sm:p-10 shadow-2xl shadow-black/70 backdrop-blur-2xl text-center flex flex-col items-center">
-            <div className="flex justify-center mb-2">
-              <GameStatus icon={<StarDot />}>
-                {mode === "create" ? "Custom Auction Setup" : "Join Bidding Arena"}
-              </GameStatus>
-            </div>
-
-          <h1 className="font-display font-black text-3xl sm:text-4xl text-cream tracking-tight text-center">
-            {mode === "create" ? "CREATE AUCTION ROOM" : "JOIN EXISTING ROOM"}
-          </h1>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1 mb-6 text-center max-w-md">
-            {mode === "create"
-              ? "Configure your auction format, franchise purse, timer, and catalog."
-              : "Enter your franchise name and 6-letter room code to join the live auction."}
-          </p>
-
-          {/* Rules Banner */}
-          {auctionType === "CRICKET" && (
-            <div className="w-full mb-6 p-4 rounded-2xl bg-gold/10 border border-gold/30 text-left">
-              <div className="flex items-center gap-2 text-xs font-black uppercase text-gold mb-1.5">
-                <Info size={15} /> Official IPL Mega Auction Rules Enforced
+          <section className="w-full bg-panel/95 border border-border/80 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-2xl text-center flex flex-col items-center">
+            {/* Game Tab Switcher on Create Mode */}
+            {mode === "create" ? (
+              <div className="inline-flex p-1 rounded-2xl bg-black/60 border border-border mb-6">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuctionType("CINEMA");
+                    setCategory("ALL");
+                  }}
+                  className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    auctionType === "CINEMA"
+                      ? "bg-gold text-black shadow-lg shadow-gold/20"
+                      : "text-muted-foreground hover:text-cream"
+                  }`}
+                >
+                  <Film size={15} /> Movie Auction
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuctionType("CRICKET");
+                    setCategory("ALL");
+                  }}
+                  className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    auctionType === "CRICKET"
+                      ? "bg-cyan-400 text-black shadow-lg shadow-cyan-400/20"
+                      : "text-muted-foreground hover:text-cream"
+                  }`}
+                >
+                  <Zap size={15} /> IPL Mega Auction
+                </button>
               </div>
-              <ul className="text-xs text-cream/90 space-y-1 list-disc list-inside">
-                <li><strong>Squad Size:</strong> Min 12 players and Max 18 players per team.</li>
-                <li><strong>Foreigners Quota:</strong> Purchase up to 7 overseas players in squad, maximum 4 in Playing 11.</li>
-                <li><strong>Endgame:</strong> Submit your <strong>Playing 11</strong>, then AI decides the Champion & Leaderboard positions!</li>
-              </ul>
-            </div>
-          )}
-
-          <form onSubmit={submit} className="w-full space-y-6 text-left">
-            {/* Mode selection if creating */}
-            {mode === "create" && (
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 text-center">
-                  Select Auction Theme
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuctionType("CRICKET");
-                      setCategory("ALL");
-                    }}
-                    className={`p-4 rounded-2xl border text-left transition-all ${
-                      auctionType === "CRICKET"
-                        ? "border-gold bg-gold/15 ring-2 ring-gold shadow-lg shadow-gold/10"
-                        : "border-border/80 bg-black/30 hover:border-gold/40"
-                    }`}
-                  >
-                    <span className="text-2xl mb-1 block">🏏</span>
-                    <strong className="block text-sm font-bold text-cream">IPL Mega Auction</strong>
-                    <span className="text-[11px] text-muted-foreground">70+ Cricketers, 12-18 Squad, Playing 11</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAuctionType("CINEMA");
-                      setCategory("ALL");
-                    }}
-                    className={`p-4 rounded-2xl border text-left transition-all ${
-                      auctionType === "CINEMA"
-                        ? "border-red bg-red/15 ring-2 ring-red shadow-lg shadow-red/10"
-                        : "border-border/80 bg-black/30 hover:border-red/40"
-                    }`}
-                  >
-                    <span className="text-2xl mb-1 block">🎬</span>
-                    <strong className="block text-sm font-bold text-cream">Movie Cinema</strong>
-                    <span className="text-[11px] text-muted-foreground">44+ Posters, 5-Film Slate</span>
-                  </button>
-                </div>
+            ) : (
+              <div className="mb-2">
+                <GameStatus icon={<StarDot />}>Join Existing Arena</GameStatus>
               </div>
             )}
 
-            {/* Franchise / Bidder Name */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                Your Franchise / Bidder Name
-              </label>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Vaibhav's XI, Mumbai Titans, Royal Challengers..."
-                className="w-full h-12 px-4 rounded-xl bg-black/50 border border-border text-cream placeholder:text-muted-foreground text-sm font-semibold focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold"
-                required
-              />
-            </div>
+            <h1 className="font-display font-black text-2xl sm:text-4xl text-cream tracking-tight">
+              {mode === "join"
+                ? "JOIN AUCTION ROOM"
+                : auctionType === "CRICKET"
+                  ? "CREATE IPL MEGA AUCTION"
+                  : "CREATE MOVIE AUCTION"}
+            </h1>
 
-            {/* If Join Mode: Room Code */}
-            {mode === "join" && (
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 text-center">
-                  6-Letter Room Code
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1 mb-6 max-w-md">
+              {mode === "join"
+                ? "Enter your bidder name and the 6-letter room code to join."
+                : auctionType === "CRICKET"
+                  ? "Configure your IPL franchise purse, round timer, and player pool."
+                  : "Configure your movie studio budget, round timer, and film catalog."}
+            </p>
+
+            {/* Concise Rules Overview Pill */}
+            {mode === "create" && (
+              <div
+                className={`w-full mb-6 p-3.5 rounded-2xl border text-left text-xs ${
+                  auctionType === "CRICKET"
+                    ? "bg-cyan-950/40 border-cyan-500/30 text-cyan-200"
+                    : "bg-gold/10 border-gold/30 text-amber-200"
+                }`}
+              >
+                {auctionType === "CRICKET" ? (
+                  <div className="flex items-center gap-2 font-bold">
+                    <Info size={16} className="text-cyan-400 flex-shrink-0" />
+                    <span>Squad: 12–18 players • Up to 7 overseas in squad (Max 4 in Playing 11)</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 font-bold">
+                    <Info size={16} className="text-gold flex-shrink-0" />
+                    <span>Studio Slate: 5 movies per producer • Evaluated by Grand Jury on IMDb & Box Office</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="w-full flex flex-col gap-4 text-left">
+              {/* Name Input */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold uppercase text-muted-foreground">
+                  {auctionType === "CRICKET" ? "Franchise Owner / Team Name" : "Studio Producer Name"}
                 </label>
                 <input
                   type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. 7X8K2M"
-                  maxLength={6}
-                  className="w-full h-12 px-4 rounded-xl bg-black/50 border border-border text-cream placeholder:text-muted-foreground text-center font-mono font-black text-xl tracking-widest uppercase focus:outline-none focus:border-gold focus:ring-1 focus:ring-gold"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={auctionType === "CRICKET" ? "e.g. Mumbai Titans, Bangalore Kings" : "e.g. Dharma Studios, YRF Head"}
+                  maxLength={30}
+                  className="w-full px-4 py-3 rounded-xl bg-black/50 border border-border text-sm text-cream placeholder:text-muted-foreground/60 focus:border-gold outline-none transition-all"
                   required
                 />
               </div>
-            )}
 
-            {/* If Create Mode: Settings */}
-            {mode === "create" && (
-              <>
-                {/* Category Options */}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                    Catalog Category (Batsmen, Bowlers, All-Rounders)
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                    {(auctionType === "CRICKET" ? cricketCategories : cinemaCategories).map((cat) => (
-                      <button
-                        key={cat.id}
-                        type="button"
-                        onClick={() => setCategory(cat.id)}
-                        className={`p-3 rounded-xl border text-left transition-all ${
-                          category === cat.id
-                            ? "border-gold bg-gold/15 ring-1 ring-gold"
-                            : "border-border/60 bg-black/30 hover:border-border"
-                        }`}
-                      >
-                        <strong className="block text-xs font-bold text-cream truncate">{cat.title}</strong>
-                        <span className="block text-[10px] text-muted-foreground truncate">{cat.subtitle}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Settings Grid */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-1">
-                      Max Franchises
-                    </label>
-                    <select
-                      value={max}
-                      onChange={(e) => setMax(e.target.value)}
-                      className="w-full h-11 px-3 rounded-xl bg-black/50 border border-border text-cream text-xs font-bold"
-                    >
-                      <option value="2">2 Franchises ({getRecommendedMoviePoolSize(2, auctionType)} Players)</option>
-                      <option value="3">3 Franchises ({getRecommendedMoviePoolSize(3, auctionType)} Players)</option>
-                      <option value="4">4 Franchises ({getRecommendedMoviePoolSize(4, auctionType)} Players)</option>
-                      <option value="5">5 Franchises ({getRecommendedMoviePoolSize(5, auctionType)} Players)</option>
-                      <option value="6">6 Franchises ({getRecommendedMoviePoolSize(6, auctionType)} Players)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-1">
-                      Starting Purse
-                    </label>
-                    <select
-                      value={budget}
-                      onChange={(e) => setBudget(e.target.value)}
-                      className="w-full h-11 px-3 rounded-xl bg-black/50 border border-border text-cream text-xs font-bold"
-                    >
-                      <option value="80">₹80 Cr</option>
-                      <option value="100">₹100 Cr (IPL Standard)</option>
-                      <option value="120">₹120 Cr (Mega Purse)</option>
-                      <option value="150">₹150 Cr</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase text-muted-foreground mb-1">
-                      Timer / Round
-                    </label>
-                    <select
-                      value={seconds}
-                      onChange={(e) => setSeconds(e.target.value)}
-                      className="w-full h-11 px-3 rounded-xl bg-black/50 border border-border text-cream text-xs font-bold"
-                    >
-                      <option value="20">20s (Fast Action)</option>
-                      <option value="30">30s (IPL Standard)</option>
-                      <option value="45">45s (Tactical Bidding)</option>
-                    </select>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Accent Color Selection */}
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                Franchise Theme Accent
-              </label>
-              <div className="flex items-center gap-3">
-                {colors.map((c) => (
-                  <button
-                    key={c.hex}
-                    type="button"
-                    onClick={() => setSelectedColor(c.hex)}
-                    style={{ backgroundColor: c.hex }}
-                    className={`w-9 h-9 rounded-full transition-transform ${
-                      selectedColor === c.hex ? "ring-4 ring-white/50 scale-110 shadow-lg" : "opacity-75 hover:opacity-100"
-                    }`}
-                    title={c.label}
+              {/* Join Code Input */}
+              {mode === "join" && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold uppercase text-muted-foreground">Room Code</label>
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. CINE-78"
+                    maxLength={10}
+                    className="w-full px-4 py-3 rounded-xl bg-black/50 border border-border font-mono font-black text-base text-gold uppercase tracking-widest placeholder:text-muted-foreground/60 focus:border-gold outline-none transition-all"
+                    required
                   />
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
 
-            {error && (
-              <div className="p-3 rounded-xl bg-red-950/60 border border-red-500/50 text-red-300 text-xs font-semibold">
-                {error}
-              </div>
-            )}
+              {/* Create Options */}
+              {mode === "create" && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Capacity */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">
+                        {auctionType === "CRICKET" ? "Franchises" : "Producers"}
+                      </label>
+                      <select
+                        value={max}
+                        onChange={(e) => setMax(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-border text-xs text-cream focus:border-gold outline-none"
+                      >
+                        <option value="2">2 Players</option>
+                        <option value="3">3 Players</option>
+                        <option value="4">4 Players (Recommended)</option>
+                        <option value="5">5 Players</option>
+                        <option value="6">6 Players</option>
+                        <option value="8">8 Players</option>
+                      </select>
+                    </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn btn-primary w-full h-13 bg-gradient-to-r from-red to-rose-600 font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-red/30 hover:brightness-110 flex items-center justify-center gap-2"
-            >
-              {loading ? (
-                <LoaderCircle size={20} className="animate-spin" />
-              ) : mode === "create" ? (
-                <>
-                  <Gavel size={18} /> Initialize Live Auction Room
-                </>
-              ) : (
-                <>
-                  <Play size={18} fill="currentColor" /> Enter Bidding Arena
+                    {/* Purse */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Starting Purse</label>
+                      <select
+                        value={budget}
+                        onChange={(e) => setBudget(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-border text-xs text-cream focus:border-gold outline-none"
+                      >
+                        <option value="75">₹75 Cr</option>
+                        <option value="100">₹100 Cr (Official Standard)</option>
+                        <option value="125">₹125 Cr</option>
+                        <option value="150">₹150 Cr</option>
+                        <option value="200">₹200 Cr</option>
+                      </select>
+                    </div>
+
+                    {/* Timer */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold uppercase text-muted-foreground">Round Timer</label>
+                      <select
+                        value={seconds}
+                        onChange={(e) => setSeconds(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-border text-xs text-cream focus:border-gold outline-none"
+                      >
+                        <option value="20">20s (Fast Blitz)</option>
+                        <option value="30">30s (Balanced)</option>
+                        <option value="45">45s (Tactical)</option>
+                        <option value="60">60s (Strategic)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Catalog Pool Category */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">
+                      {auctionType === "CRICKET" ? "Cricketer Pool Category" : "Movie Catalog Selection"}
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {(auctionType === "CRICKET" ? cricketCategories : cinemaCategories).map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setCategory(cat.id)}
+                          className={`p-3 rounded-xl border text-left transition-all flex flex-col ${
+                            category === cat.id
+                              ? auctionType === "CRICKET"
+                                ? "bg-cyan-950/60 border-cyan-400 text-cream"
+                                : "bg-gold/20 border-gold text-cream"
+                              : "bg-black/30 border-border/70 hover:border-border text-muted-foreground"
+                          }`}
+                        >
+                          <strong className="text-xs font-bold text-cream">{cat.title}</strong>
+                          <span className="text-[10px] text-muted-foreground mt-0.5">{cat.desc}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </>
               )}
-            </button>
-          </form>
+
+              {/* Color Picker */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold uppercase text-muted-foreground">Badge Accent Color</label>
+                <div className="flex items-center gap-2">
+                  {colors.map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      onClick={() => setSelectedColor(c.hex)}
+                      className={`w-7 h-7 rounded-full border-2 transition-all ${
+                        selectedColor === c.hex ? "scale-125 ring-2 ring-white border-white" : "border-black/50 opacity-75 hover:opacity-100"
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                      title={c.label}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {error && <p className="text-xs text-red-400 font-bold">{error}</p>}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className={`btn btn-primary w-full py-3.5 mt-3 rounded-2xl font-display font-black text-xs uppercase tracking-wider shadow-xl flex items-center justify-center gap-2 ${
+                  auctionType === "CRICKET"
+                    ? "bg-gradient-to-r from-cyan-400 to-blue-500 text-black shadow-cyan-500/20"
+                    : "bg-gradient-to-r from-gold to-amber-500 text-black shadow-gold/20"
+                }`}
+              >
+                {loading ? (
+                  <LoaderCircle size={16} className="animate-spin" />
+                ) : mode === "join" ? (
+                  <>
+                    <Play size={16} fill="black" /> Enter Bidding Arena
+                  </>
+                ) : (
+                  <>
+                    <Gavel size={16} /> Launch {auctionType === "CRICKET" ? "IPL Auction Room" : "Movie Auction Room"}
+                  </>
+                )}
+              </button>
+            </form>
           </section>
         </div>
       </main>
@@ -664,7 +706,7 @@ export function GameForm({ mode }: { mode: "create" | "join" }) {
 }
 
 // -------------------------------------------------------------
-// 3. LOBBY SCREEN (PRE-GAME WAITING ROOM)
+// 3. LOBBY SCREEN (CLEAN SEPARATION FOR MOVIE VS CRICKET)
 // -------------------------------------------------------------
 export function LobbyScreen({ roomCode }: { roomCode: string }) {
   const code = roomCode.toUpperCase();
@@ -676,7 +718,6 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
 
   useEffect(() => {
     let isMounted = true;
-
     void fetchRemoteRoom(code).then((remote) => {
       if (!isMounted) return;
       if (remote) {
@@ -712,12 +753,24 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleShufflePool = () => {
+    if (!room || !isHost) return;
+    const poolSize = Math.max(15, room.moviePool.length);
+    if (room.auctionType === "CRICKET") {
+      room.moviePool = getRandomizedCricketSlate(poolSize, room.settings.category || "ALL");
+    } else {
+      room.moviePool = getRandomizedMovieSlate(poolSize, room.settings.category || "ALL");
+    }
+    saveRoom(room);
+    setRoom({ ...room });
+  };
+
   const handleStartGame = () => {
     if (!room) return;
     room.status = "AUCTION";
     room.currentMovieIndex = 0;
-    const firstMovie = room.moviePool[0];
-    room.currentBid = firstMovie ? firstMovie.basePrice : 1;
+    const first = room.moviePool[0];
+    room.currentBid = first ? first.basePrice : 1;
     room.currentBidderId = null;
     room.currentBidderName = null;
     room.secondsRemaining = room.settings.auctionSeconds;
@@ -743,20 +796,24 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
 
   return (
     <Page>
-      <main className="lobby-layout max-w-6xl mx-auto px-4 sm:px-8 py-10 flex flex-col gap-6 w-full">
+      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-10 flex flex-col gap-6 w-full">
         {/* Lobby Header */}
         <section className="bg-panel/90 border border-border/80 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl">
           <div className="text-left">
-            <GameStatus icon={<StarDot />}>Live Bidding Lobby</GameStatus>
+            <GameStatus icon={<StarDot />}>
+              {isCricket ? "IPL War-Room Lobby" : "Studio Cinema Lobby"}
+            </GameStatus>
             <h1 className="text-3xl sm:text-4xl font-black text-cream font-display mt-2">
               {isCricket ? "🏏 IPL MEGA AUCTION LOBBY" : "🎬 FILM STUDIO LOBBY"}
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-              Share the room code with rival franchise owners to join and begin.
+              {isCricket
+                ? "Share room code with rival franchise owners to join."
+                : "Share room code with rival movie producers to join."}
             </p>
           </div>
 
-          <div className="flex flex-col items-center sm:items-end gap-2">
+          <div className="flex flex-col items-center sm:items-end gap-1.5">
             <span className="text-xs uppercase font-bold text-muted-foreground tracking-wider">
               Room Invitation Code
             </span>
@@ -776,23 +833,14 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
           </div>
         </section>
 
-        {/* Rules Reminder Card */}
-        {isCricket && (
-          <section className="p-4 rounded-2xl bg-gold/10 border border-gold/30 text-left flex items-start gap-3">
-            <Info size={18} className="text-gold flex-shrink-0 mt-0.5" />
-            <div className="text-xs text-cream/90">
-              <strong className="text-gold block mb-0.5">IPL Mega Auction Rules:</strong>
-              Each franchise builds a squad of <strong>12 to 18 players</strong> with <strong>up to 7 overseas players</strong>. At the end of the auction, each franchise submits their <strong>Playing 11 (max 4 overseas)</strong>, and the AI Jury simulates the championship tournament to crown the winner and generate the Leaderboard!
-            </div>
-          </section>
-        )}
-
-        {/* Players Grid and Action Controls */}
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-panel/90 border border-border/80 rounded-3xl p-6 shadow-xl flex flex-col gap-4">
+        {/* Players & Chat Grid */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Participants */}
+          <div className="lg:col-span-8 bg-panel/90 border border-border/80 rounded-3xl p-6 shadow-xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-black text-cream font-display">
-                Franchises in Room ({room.players.length} / {room.settings.maxPlayers})
+              <h2 className="text-sm font-black uppercase tracking-wider text-cream flex items-center gap-2">
+                <Users size={16} className="text-gold" />
+                {isCricket ? "Franchise Owners" : "Studio Producers"} ({room.players.length} / {room.settings.maxPlayers})
               </h2>
             </div>
 
@@ -800,11 +848,11 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
               {room.players.map((p) => (
                 <div
                   key={p.id}
-                  className="p-3.5 rounded-2xl bg-black/40 border border-border/70 flex items-center justify-between gap-3 shadow-inner"
+                  className="p-3 rounded-2xl bg-black/40 border border-border/60 flex items-center justify-between gap-3"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
                     <span
-                      className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm border-2 flex-shrink-0 shadow-sm"
+                      className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs border-2 flex-shrink-0"
                       style={p.color ? { borderColor: p.color, color: p.color } : undefined}
                     >
                       {p.avatar}
@@ -814,7 +862,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
                         {p.name} {p.id === currentUser.id && "(You)"}
                       </strong>
                       <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        {p.isHost ? "👑 Room Host" : "🎮 Franchise Owner"}
+                        {p.isHost ? "👑 Host" : isCricket ? "Franchise Owner" : "Studio Producer"}
                       </span>
                     </div>
                   </div>
@@ -827,22 +875,24 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
             </div>
 
             {/* Room Settings Summary */}
-            <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-border/60 text-center">
-              <div className="p-2.5 rounded-xl bg-black/30 border border-border/50">
+            <div className="grid grid-cols-3 gap-2 mt-2 pt-4 border-t border-border/60 text-center">
+              <div className="p-2 rounded-xl bg-black/30 border border-border/50">
                 <span className="text-[10px] text-muted-foreground uppercase font-bold">Purse</span>
                 <strong className="block text-xs font-black text-gold mt-0.5">{formatCr(room.settings.startingBudget)}</strong>
               </div>
-              <div className="p-2.5 rounded-xl bg-black/30 border border-border/50">
+              <div className="p-2 rounded-xl bg-black/30 border border-border/50">
                 <span className="text-[10px] text-muted-foreground uppercase font-bold">Timer</span>
                 <strong className="block text-xs font-black text-cream mt-0.5">{room.settings.auctionSeconds}s / Item</strong>
               </div>
-              <div className="p-2.5 rounded-xl bg-black/30 border border-border/50">
-                <span className="text-[10px] text-muted-foreground uppercase font-bold">Auction Slate</span>
-                <strong className="block text-xs font-black text-cyan-400 mt-0.5">{room.moviePool.length} Players</strong>
+              <div className="p-2 rounded-xl bg-black/30 border border-border/50">
+                <span className="text-[10px] text-muted-foreground uppercase font-bold">Auction Pool</span>
+                <strong className="block text-xs font-black text-cyan-400 mt-0.5">
+                  {room.moviePool.length} {isCricket ? "Cricketers" : "Movies"}
+                </strong>
               </div>
             </div>
 
-            {/* Start Button */}
+            {/* Launch Controls */}
             {isHost ? (
               <button
                 type="button"
@@ -852,16 +902,42 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
                 <Gavel size={18} /> Launch Live Auction
               </button>
             ) : (
-              <div className="p-4 rounded-2xl bg-black/40 border border-border/70 text-center text-xs text-muted-foreground mt-2">
+              <div className="p-3.5 rounded-2xl bg-black/40 border border-border/70 text-center text-xs text-muted-foreground mt-2">
                 Waiting for host (<strong>{room.hostName}</strong>) to launch the auction...
               </div>
             )}
           </div>
 
           {/* Right Chat Sidebar */}
-          <aside className="bg-panel/90 border border-border/80 rounded-3xl p-4 shadow-xl flex flex-col">
+          <aside className="lg:col-span-4 bg-panel/90 border border-border/80 rounded-3xl p-4 shadow-xl flex flex-col">
             <RoomChat roomCode={code} playerName={currentUser.name} />
           </aside>
+        </section>
+
+        {/* Catalog Preview */}
+        <section className="bg-panel/90 border border-border/80 rounded-3xl p-6 shadow-xl flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-black uppercase tracking-wider text-cream flex items-center gap-2">
+              {isCricket ? "🏏 Auction Cricketer Pool Preview" : "🎬 Auction Movie Slate Preview"}
+              <span className="text-xs text-gold">({room.moviePool.length} Items)</span>
+            </h2>
+            {isHost && (
+              <button
+                type="button"
+                onClick={handleShufflePool}
+                className="btn btn-secondary text-xs px-3 py-1.5 rounded-xl border border-gold/40 text-gold flex items-center gap-1.5"
+                title="Randomize the auction pool"
+              >
+                <Shuffle size={14} /> Shuffle Pool
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            {room.moviePool.slice(0, 12).map((item) => (
+              <MovieCard key={item.id} movie={item} />
+            ))}
+          </div>
         </section>
       </main>
     </Page>
@@ -869,7 +945,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
 }
 
 // -------------------------------------------------------------
-// 4. LIVE AUCTION SCREEN (SPACIOUS 3-COLUMN DESKTOP WAR-ROOM)
+// 4. LIVE AUCTION SCREEN (CLEAN SEPARATION: CINEMA VS CRICKET)
 // -------------------------------------------------------------
 export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const code = roomCode.toUpperCase();
@@ -890,9 +966,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
 
   useEffect(() => {
     const activeRoom = getOrCreateRoom(code);
-    if (activeRoom.status !== "AUCTION") {
-      activeRoom.status = "AUCTION";
-    }
+    if (activeRoom.status !== "AUCTION") activeRoom.status = "AUCTION";
     if (!activeRoom.outPlayerIds) activeRoom.outPlayerIds = [];
     if (!activeRoom.auctionEndTime && !activeRoom.isSold) {
       activeRoom.auctionEndTime = Date.now() + (activeRoom.secondsRemaining || 30) * 1000;
@@ -906,13 +980,12 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
         playBidSound();
         if (fresh.currentBidderName) {
           const isMe = fresh.currentBidderId === currentUser.id;
-          showBidToast(isMe ? `Your bid of ${formatCr(fresh.currentBid)} is leading!` : `${fresh.currentBidderName} placed a bid of ${formatCr(fresh.currentBid)}!`);
+          showBidToast(isMe ? `Your bid of ${formatCr(fresh.currentBid)} is leading!` : `${fresh.currentBidderName} bid ${formatCr(fresh.currentBid)}!`);
         }
       }
       if (!prevBidRef.current || fresh.currentBid !== prevBidRef.current) {
         prevBidRef.current = fresh.currentBid;
       }
-
       setRoom(fresh);
       if (fresh.status === "TOP_FIVE" || fresh.status === "RESULTS") {
         navigate({ to: "/results/$roomCode", params: { roomCode: code } });
@@ -928,7 +1001,6 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const handleTimerExpired = () => {
     const latest = getRoom(code);
     if (!latest || latest.isSold || latest.status !== "AUCTION") return;
-
     const resolved = resolveCurrentAuction(latest.roomCode);
     if (resolved) {
       playGavelWinSound();
@@ -937,7 +1009,6 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   };
 
   if (!room) return null;
-
   const currentItem = room.moviePool[room.currentMovieIndex] || movies[0]!;
   if (!currentItem) return null;
   const me = room.players.find((p) => p.id === currentUser.id) || room.players[0];
@@ -950,7 +1021,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const totalRounds = Math.min(room.settings.totalMovies, room.moviePool.length);
   const isCricket = room.auctionType === "CRICKET" || Boolean(currentItem.role);
 
-  // IPL Rule checks for user (max 7 in squad, max 4 in Playing 11)
+  // IPL Rule checks
   const isOverseasItem = isCricket && isOverseasPlayer(currentItem);
   const myOverseasCount = isCricket ? me.movies.filter((m) => isOverseasPlayer(m)).length : 0;
   const isSquadFull = isCricket && me.movies.length >= 18;
@@ -969,14 +1040,12 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     }
   };
 
-  const handleUserOut = () => {
+  const handleUserOutOrPass = () => {
     if (room.isSold || isMeOut || isWinning) return;
     const res = playerPassOrOut(room.roomCode, me.id);
     if (res.success && res.room) {
       setRoom({ ...res.room });
-      if (res.isResolved) {
-        playGavelWinSound();
-      }
+      if (res.isResolved) playGavelWinSound();
     }
   };
 
@@ -988,7 +1057,6 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
       navigate({ to: "/results/$roomCode", params: { roomCode: code } });
       return;
     }
-
     const updated = advanceToNextMovie(room.roomCode);
     if (updated) {
       prevBidRef.current = updated.currentBid;
@@ -996,80 +1064,92 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     }
   };
 
-  const roleInfo = getRoleBadge(currentItem.role, currentItem.genre);
-
-  const [activeRosterPlayerId, setActiveRosterPlayerId] = useState<string | null>(null);
-  const activeRosterFranchise = room.players.find((p) => p.id === (activeRosterPlayerId || currentUser.id)) || me;
-  const displayedRoster = activeRosterFranchise?.movies || [];
-  const displayedOverseasCount = isCricket ? displayedRoster.filter((m) => isOverseasPlayer(m)).length : 0;
+  // State for bottom acquired bar
+  const [activeRosterId, setActiveRosterId] = useState<string | null>(null);
+  const activeFranchiseOrProducer = room.players.find((p) => p.id === (activeRosterId || currentUser.id)) || me;
+  const displayedItems = activeFranchiseOrProducer?.movies || [];
 
   return (
     <Page>
-      <main className="auction-layout max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-12 gap-4 xl:gap-5 items-stretch w-full">
-        {/* Left Column: Real Cricketer Card with High-Res Photo & Stats */}
+      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-12 gap-4 xl:gap-5 items-stretch w-full">
+        {/* LEFT COLUMN: Item Card */}
         <section className="lg:col-span-4 xl:col-span-3 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col justify-between gap-3 h-full">
           <div className="flex flex-col gap-2.5">
-            <div className="aspect-[4/3] w-full rounded-xl overflow-hidden relative shadow-inner bg-black flex-shrink-0">
+            {/* Poster: 2:3 aspect ratio for Movie, 3:4 for Cricket */}
+            <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-xl overflow-hidden relative shadow-inner bg-black flex-shrink-0`}>
               <Poster movie={currentItem} className="w-full h-full object-cover" />
             </div>
 
             <div className="flex flex-col gap-1 text-left">
-              <div className="flex items-center gap-2 flex-wrap text-xs text-gold font-bold">
-                <span className={`px-2 py-0.5 rounded-md border text-[10px] ${roleInfo.colorClass}`}>
-                  {roleInfo.label}
-                </span>
-                <span>•</span>
-                <span className="text-cyan-300">
-                  {isOverseasItem ? `✈️ ${currentItem.country || "Overseas"}` : `🇮🇳 India`}
-                </span>
-              </div>
-
-              <h2 className="text-xl sm:text-2xl font-black text-cream font-display leading-tight">
-                {currentItem.title}
-              </h2>
-
-              {/* Cricket Stats Grid */}
-              {isCricket && currentItem.stats ? (
-                <div className="grid grid-cols-3 gap-1.5 mt-0.5 pt-2 border-t border-border/70 text-center">
-                  <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                    <span className="block text-[9px] text-muted-foreground uppercase font-bold">Matches</span>
-                    <strong className="text-xs font-black text-cream">{currentItem.stats.matches}</strong>
-                  </div>
-                  <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                    <span className="block text-[9px] text-muted-foreground uppercase font-bold">
-                      {currentItem.stats.wickets ? "Wickets" : "T20 Runs"}
+              {isCricket ? (
+                <>
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-gold font-bold">
+                    <span className={`px-2 py-0.5 rounded-md border text-[10px] ${getRoleBadge(currentItem.role, currentItem.genre).colorClass}`}>
+                      {getRoleBadge(currentItem.role, currentItem.genre).label}
                     </span>
-                    <strong className="text-xs font-black text-gold">
-                      {currentItem.stats.wickets || currentItem.stats.runs || "—"}
-                    </strong>
-                  </div>
-                  <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                    <span className="block text-[9px] text-muted-foreground uppercase font-bold">
-                      {currentItem.stats.economy ? "Economy" : "Strike Rate"}
+                    <span>•</span>
+                    <span className="text-cyan-300">
+                      {isOverseasItem ? `✈️ ${currentItem.country || "Overseas"}` : `🇮🇳 India`}
                     </span>
-                    <strong className="text-xs font-black text-cyan-400">
-                      {currentItem.stats.economy || currentItem.stats.strikeRate || "—"}
-                    </strong>
                   </div>
-                </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-cream font-display leading-tight mt-0.5">
+                    {currentItem.title}
+                  </h2>
+                  {currentItem.stats && (
+                    <div className="grid grid-cols-3 gap-1.5 mt-1 pt-2 border-t border-border/70 text-center">
+                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
+                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">Matches</span>
+                        <strong className="text-xs font-black text-cream">{currentItem.stats.matches}</strong>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
+                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">
+                          {currentItem.stats.wickets ? "Wickets" : "T20 Runs"}
+                        </span>
+                        <strong className="text-xs font-black text-gold">
+                          {currentItem.stats.wickets || currentItem.stats.runs || "—"}
+                        </strong>
+                      </div>
+                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
+                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">
+                          {currentItem.stats.economy ? "Economy" : "Strike Rate"}
+                        </span>
+                        <strong className="text-xs font-black text-cyan-400">
+                          {currentItem.stats.economy || currentItem.stats.strikeRate || "—"}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+                  {currentItem.signatureSkill && (
+                    <div className="p-1.5 rounded-lg bg-gold/10 border border-gold/30 text-[10px] font-semibold text-gold flex items-center gap-1.5 mt-1">
+                      <Zap size={12} className="text-gold flex-shrink-0" />
+                      <span>Specialty: {currentItem.signatureSkill}</span>
+                    </div>
+                  )}
+                </>
               ) : (
-                <p className="text-xs text-muted-foreground">
-                  Director: <strong>{currentItem.director}</strong> | IMDb:{" "}
-                  <strong>★ {currentItem.imdbRating}</strong> | BO: <strong>₹{currentItem.boxOffice} Cr</strong>
-                </p>
-              )}
-
-              {currentItem.signatureSkill && (
-                <div className="p-1.5 rounded-lg bg-gold/10 border border-gold/30 text-[10px] font-semibold text-gold flex items-center gap-1.5">
-                  <Zap size={12} className="text-gold flex-shrink-0" />
-                  <span>Specialty: {currentItem.signatureSkill}</span>
-                </div>
-              )}
-
-              {currentItem.tagline && (
-                <p className="text-[11px] text-cream/70 italic bg-black/20 p-1.5 rounded-lg">
-                  "{currentItem.tagline}"
-                </p>
+                <>
+                  <div className="flex items-center gap-2 text-xs text-gold font-bold">
+                    <span>{currentItem.year}</span>
+                    <span>•</span>
+                    <span className="truncate">{currentItem.genre}</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-cream font-display leading-tight mt-0.5">
+                    {currentItem.title}
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Director: <strong className="text-cream">{currentItem.director}</strong>
+                  </p>
+                  <div className="flex items-center gap-3 text-xs mt-0.5">
+                    <span className="text-yellow-400 font-bold">★ IMDb {currentItem.imdbRating}</span>
+                    <span>•</span>
+                    <span className="text-gold font-bold">BO: ₹{currentItem.boxOffice} Cr</span>
+                  </div>
+                  {currentItem.tagline && (
+                    <p className="text-[11px] text-cream/70 italic bg-black/20 p-1.5 rounded-lg mt-1">
+                      "{currentItem.tagline}"
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -1080,18 +1160,18 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
           </div>
         </section>
 
-        {/* Center Column: Live Stage, Timer, Big Bid Readout, "OUT" button & Bid Controls */}
+        {/* CENTER COLUMN: Stage, Timer, Bid, Controls */}
         <section className="lg:col-span-8 xl:col-span-5 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-6 flex flex-col items-center text-center justify-between gap-3 shadow-xl h-full">
           <div className="w-full flex items-center justify-between">
             <GameStatus icon={<StarDot />}>
-              {isCricket ? "🏏 IPL Live Bidding Round" : "🎬 Cinema Bidding Round"}
+              {isCricket ? "🏏 IPL Bidding Round" : "🎬 Cinema Bidding Round"}
             </GameStatus>
             <span className="text-xs font-mono font-bold text-muted-foreground">
               Round {room.currentMovieIndex + 1} of {totalRounds}
             </span>
           </div>
 
-          {/* Auction Countdown Timer */}
+          {/* Timer */}
           <AuctionTimer
             seconds={room.secondsRemaining}
             endTime={room.auctionEndTime}
@@ -1129,14 +1209,14 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
             </div>
           </div>
 
-          {/* Round Sold / Passed Plaque OR Active Bid & "OUT" Controls */}
+          {/* Round Sold Plaque OR Active Controls */}
           {room.isSold ? (
             <div className="sold-panel w-full max-w-md bg-gradient-to-b from-panel to-panel-strong border border-gold/50 rounded-2xl p-4 sm:p-5 shadow-2xl text-center my-auto flex flex-col items-center">
               <span className="text-xs uppercase font-black text-gold tracking-widest block mb-1.5">
                 🔨 Gavel Down • Round Concluded
               </span>
               <div className="w-16 h-20 rounded-xl overflow-hidden border border-gold/40 mb-2 shadow-lg">
-                <Poster movie={currentItem} className="w-full h-full" />
+                <Poster movie={currentItem} className="w-full h-full object-cover" />
               </div>
               <h2 className="text-xl font-black text-cream font-display">{currentItem.title}</h2>
               <p className="text-xs mt-1 text-cream/90">
@@ -1146,7 +1226,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                     <strong className="text-gold font-mono">{formatCr(room.currentBid)}</strong>
                   </>
                 ) : (
-                  <span className="text-muted-foreground">Passed with all franchises calling OUT / no bids.</span>
+                  <span className="text-muted-foreground">Passed with no bids placed.</span>
                 )}
               </p>
 
@@ -1155,33 +1235,35 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                   onClick={handleNextItem}
                   className="btn btn-primary mt-3 mx-auto px-6 py-2.5 bg-gradient-to-r from-red to-rose-600 font-bold rounded-xl flex items-center gap-2 text-xs"
                 >
-                  {room.currentMovieIndex + 1 >= totalRounds ? "Finalize Playing 11 & Evaluate" : "Next Round"}
+                  {room.currentMovieIndex + 1 >= totalRounds
+                    ? isCricket ? "Finalize Playing 11 & Evaluate" : "Finalize Studio Slate & Evaluate"
+                    : isCricket ? "Next Cricketer" : "Next Movie"}
                   <ChevronRight size={16} />
                 </button>
               ) : (
                 <div className="text-xs text-muted-foreground mt-2">
-                  Waiting for room host to advance to round {room.currentMovieIndex + 2}...
+                  Waiting for room host to proceed to round {room.currentMovieIndex + 2}...
                 </div>
               )}
             </div>
           ) : (
             <div className="w-full max-w-md flex flex-col items-center gap-2.5">
-              {/* Warnings if squad limit or overseas limit is reached */}
-              {isSquadFull ? (
-                <div className="w-full p-3 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
-                  ⛔ Squad Limit Reached (18/18 players). You have completed your full squad!
+              {/* Warnings */}
+              {isCricket && isSquadFull ? (
+                <div className="w-full p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
+                  ⛔ Squad Limit Reached (18/18 players). Full squad complete!
                 </div>
-              ) : isOverseasFull ? (
-                <div className="w-full p-3 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
-                  ✈️ Overseas Squad Limit Reached (7/7 overseas players). You cannot bid on overseas players in squad.
+              ) : isCricket && isOverseasFull ? (
+                <div className="w-full p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
+                  ✈️ Overseas Limit Reached (7/7 players). Cannot bid on overseas players.
                 </div>
               ) : isMeOut ? (
-                <div className="w-full p-3 rounded-xl bg-red-950/40 border border-red-500/40 text-red-300 text-xs font-bold text-center">
-                  🔴 You called <strong>"OUT"</strong> on this {isCricket ? "player" : "movie"}. You cannot bid on this round.
+                <div className="w-full p-2.5 rounded-xl bg-red-950/40 border border-red-500/40 text-red-300 text-xs font-bold text-center">
+                  🔴 You passed on this {isCricket ? "cricketer" : "movie"}.
                 </div>
               ) : (
                 <>
-                  {/* Quick Increment Bidding Buttons */}
+                  {/* Quick Increment Buttons */}
                   <div className="grid grid-cols-3 gap-2 w-full">
                     <button
                       type="button"
@@ -1209,7 +1291,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                     </button>
                   </div>
 
-                  {/* Main Primary Bid Button */}
+                  {/* Primary Bid Button */}
                   <button
                     type="button"
                     className="btn btn-primary w-full py-3 rounded-xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-gold/20 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1219,15 +1301,14 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                     {isWinning ? "Leading Highest Bid (You)" : `Raise Bid to ${formatCr(room.currentBid + 1)}`}
                   </button>
 
-                  {/* OUT Button */}
+                  {/* Pass / Out Button */}
                   <button
                     type="button"
-                    onClick={handleUserOut}
+                    onClick={handleUserOutOrPass}
                     disabled={isWinning}
                     className="w-full py-2 px-3 rounded-xl border border-red-500/40 bg-red-950/30 hover:bg-red-900/50 text-red-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                    title="Declare that you are OUT on this player and will not bid anymore this round"
                   >
-                    <XCircle size={14} /> ⛔ I'm OUT (Pass On This {isCricket ? "Player" : "Movie"})
+                    <XCircle size={14} /> Pass On This {isCricket ? "Cricketer" : "Movie"}
                   </button>
                 </>
               )}
@@ -1248,31 +1329,41 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
             </div>
           )}
 
-          {/* Franchise Squad Quota Progress Bar */}
+          {/* Quota Progress Bar */}
           <div className="mt-1 flex items-center gap-2.5 text-xs text-muted-foreground bg-black/40 px-4 py-1.5 rounded-full border border-border/60 flex-wrap justify-center">
-            <Award size={13} className="text-gold" />
-            <span>Squad:</span>
-            <strong className={me.movies.length >= 12 ? "text-emerald-400" : "text-amber-300"}>
-              {me.movies.length} / 18 {isCricket ? "(Min 12)" : "Acquired"}
-            </strong>
-
-            {isCricket && (
+            {isCricket ? (
               <>
+                <Award size={13} className="text-gold" />
+                <span>Squad:</span>
+                <strong className={me.movies.length >= 12 ? "text-emerald-400" : "text-amber-300"}>
+                  {me.movies.length} / 18 Players (Min 12)
+                </strong>
                 <span>•</span>
                 <span className={myOverseasCount >= 7 ? "text-amber-400 font-bold" : "text-cyan-300 font-semibold"}>
                   ✈️ {myOverseasCount} / 7 OS (Max 4 in 11)
                 </span>
               </>
+            ) : (
+              <>
+                <Film size={13} className="text-gold" />
+                <span>Your Studio Slate:</span>
+                <strong className={me.movies.length >= 5 ? "text-emerald-400" : "text-amber-300"}>
+                  {me.movies.length} / 5 Films Acquired
+                </strong>
+                {me.movies.length < 5 && (
+                  <span className="text-[10px] text-muted-foreground">({5 - me.movies.length} more needed)</span>
+                )}
+              </>
             )}
           </div>
         </section>
 
-        {/* Right Column: Participant Status & Live War-Room Chat */}
+        {/* RIGHT COLUMN: Standings & Live War-Room Chat */}
         <aside className="lg:col-span-12 xl:col-span-4 flex flex-col gap-3">
           <div className="bg-panel/90 border border-border/80 rounded-2xl p-4 shadow-xl flex flex-col gap-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-black">
-                Franchise Bidders Status
+                {isCricket ? "Franchise Bidders Status" : "Studio Producers Status"}
               </h3>
               <span className="text-[10px] text-muted-foreground">Live Room</span>
             </div>
@@ -1302,36 +1393,39 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
           />
         </aside>
 
-        {/* Bottom Section: Real-Time Acquired Players / Squad Tray */}
+        {/* BOTTOM SECTION: AUCTION BAR & REAL-TIME ACQUIRED TRAY */}
         <section className="lg:col-span-12 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col gap-3 mt-1">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="p-2 rounded-xl bg-gold/15 text-gold border border-gold/30">
-                <Award size={18} />
+                {isCricket ? <Award size={18} /> : <Film size={18} />}
               </span>
               <div className="flex flex-col text-left">
                 <h3 className="text-sm font-black text-cream uppercase tracking-wider font-display flex items-center gap-2">
-                  {activeRosterFranchise?.id === currentUser.id ? "My Acquired Squad" : `${activeRosterFranchise?.name}'s Squad`}
+                  {activeFranchiseOrProducer?.id === currentUser.id
+                    ? isCricket ? "My Acquired Squad" : "My Studio Slate"
+                    : isCricket ? `${activeFranchiseOrProducer?.name}'s Squad` : `${activeFranchiseOrProducer?.name}'s Slate`}
                   <span className="text-xs font-mono font-bold text-gold">
-                    ({displayedRoster.length} / 18 Players)
+                    ({displayedItems.length} {isCricket ? "/ 18 Players" : "/ 5 Films"})
                   </span>
                 </h3>
                 <span className="text-[11px] text-muted-foreground">
-                  Real-time bought players • {isCricket ? `✈️ ${displayedOverseasCount}/7 Overseas` : `🎬 ${displayedRoster.length} Titles`} • Purse: <strong>{formatCr(activeRosterFranchise?.budget || 0)}</strong>
+                  Purse Available: <strong className="text-gold font-mono">{formatCr(activeFranchiseOrProducer?.budget || 0)}</strong>
+                  {isCricket && ` • ✈️ ${displayedItems.filter((m) => isOverseasPlayer(m)).length}/7 Overseas`}
                 </span>
               </div>
             </div>
 
-            {/* Franchise Filter Tabs */}
+            {/* Switcher Tabs */}
             {room.players.length > 1 && (
               <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1">
                 {room.players.map((p) => {
-                  const isSelected = p.id === (activeRosterPlayerId || currentUser.id);
+                  const isSelected = p.id === (activeRosterId || currentUser.id);
                   return (
                     <button
                       key={p.id}
                       type="button"
-                      onClick={() => setActiveRosterPlayerId(p.id)}
+                      onClick={() => setActiveRosterId(p.id)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 ${
                         isSelected
                           ? "bg-gold text-black shadow-md shadow-gold/20 font-black"
@@ -1339,7 +1433,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                       }`}
                     >
                       <span>{p.avatar}</span>
-                      <span className="truncate max-w-[110px]">{p.id === currentUser.id ? "My Squad" : p.name}</span>
+                      <span className="truncate max-w-[110px]">{p.id === currentUser.id ? "Me" : p.name}</span>
                       <span className="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] font-mono">
                         {p.movies.length}
                       </span>
@@ -1350,25 +1444,27 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
             )}
           </div>
 
-          {/* Acquired Players Grid */}
-          {displayedRoster.length === 0 ? (
+          {/* Acquired Items Grid */}
+          {displayedItems.length === 0 ? (
             <div className="p-8 rounded-xl bg-black/20 border border-dashed border-border/60 text-center flex flex-col items-center justify-center gap-2">
-              <Award size={28} className="text-muted-foreground/40" />
+              {isCricket ? <Award size={28} className="text-muted-foreground/40" /> : <Film size={28} className="text-muted-foreground/40" />}
               <p className="text-xs text-muted-foreground">
-                No players acquired yet. Win live bidding rounds to build your squad in real time!
+                {isCricket
+                  ? "No cricketers acquired yet. Win live bidding rounds to build your franchise squad!"
+                  : "No movies acquired yet. Win live bidding rounds to build your studio slate!"}
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pt-1">
-              {displayedRoster.map((item, idx) => {
+              {displayedItems.map((item, idx) => {
                 const role = getRoleBadge(item.role, item.genre);
-                const isOverseas = isOverseasPlayer(item);
+                const isOverseas = isCricket && isOverseasPlayer(item);
                 return (
                   <div
                     key={`${item.id}_${idx}`}
-                    className="group bg-black/50 border border-border/70 hover:border-gold/50 rounded-xl p-2.5 flex flex-col gap-2 transition-all shadow-md animate-in fade-in zoom-in-95 duration-200"
+                    className="group bg-black/50 border border-border/70 hover:border-gold/50 rounded-xl p-2.5 flex flex-col gap-2 transition-all shadow-md"
                   >
-                    <div className="aspect-[4/3] w-full rounded-lg overflow-hidden relative shadow-inner bg-black">
+                    <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-lg overflow-hidden relative shadow-inner bg-black`}>
                       <Poster movie={item} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                       <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm text-[9px] font-mono font-bold text-gold border border-gold/30">
                         {formatCr(item.purchasePrice || item.basePrice)}
@@ -1380,16 +1476,21 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                         {item.title}
                       </strong>
 
-                      <div className="flex items-center justify-between gap-1 mt-1">
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border truncate ${role.colorClass}`}>
-                          {role.label}
-                        </span>
-                        {isCricket && (
+                      {isCricket ? (
+                        <div className="flex items-center justify-between gap-1 mt-1">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border truncate ${role.colorClass}`}>
+                            {role.label}
+                          </span>
                           <span className="text-[10px] flex-shrink-0" title={isOverseas ? "Overseas Player" : "Indian Player"}>
                             {isOverseas ? "✈️" : "🇮🇳"}
                           </span>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
+                          <span className="text-yellow-400 font-bold">★ {item.imdbRating}</span>
+                          <span className="truncate max-w-[80px]">{item.genre}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1403,7 +1504,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
 }
 
 // -------------------------------------------------------------
-// 5. RESULTS & EVALUATION SCREEN (PLAYING 11 SELECTION & LEADERBOARD)
+// 5. RESULTS SCREEN (DEDICATED SLATE / PLAYING 11 & LEADERBOARD)
 // -------------------------------------------------------------
 export function ResultsScreen({ roomCode }: { roomCode: string }) {
   const code = roomCode.toUpperCase();
@@ -1418,16 +1519,14 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
 
   // Default optimal selection
   const initialOptimal = useMemo(() => {
-    if (isCricket) {
-      return getOptimalPlaying11(userWonItems);
-    }
+    if (isCricket) return getOptimalPlaying11(userWonItems);
     return { playing11: userWonItems.slice(0, 5).map((m) => m.id) };
   }, [isCricket, userWonItems]);
 
   const [selected, setSelected] = useState<string[]>(() => initialOptimal.playing11);
   const [captainId, setCaptainId] = useState<string | undefined>(() => initialOptimal.captainId);
   const [viceCaptainId, setViceCaptainId] = useState<string | undefined>(() => initialOptimal.viceCaptainId);
-  const [selectionNotice, setSelectionNotice] = useState<string>("");
+  const [notice, setNotice] = useState<string>("");
   const [rankings, setRankings] = useState<PlayerScore[]>([]);
 
   useEffect(() => {
@@ -1451,7 +1550,6 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
 
   useEffect(() => {
     if (step !== "evaluating") return;
-
     let isMounted = true;
     const runEvaluation = async () => {
       try {
@@ -1464,65 +1562,40 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
         if (isMounted) setStep("final");
       }
     };
-
     void runEvaluation();
-
     return () => {
       isMounted = false;
     };
   }, [step, code, selected]);
 
-  const targetCount = isCricket ? Math.min(11, Math.max(1, userWonItems.length)) : Math.min(5, Math.max(1, userWonItems.length));
+  const maxSelectable = isCricket ? Math.min(11, Math.max(1, userWonItems.length)) : Math.min(5, Math.max(1, userWonItems.length));
 
-  // Compute selected player composition
-  const selectedPlayers = useMemo(
+  const selectedItems = useMemo(
     () => userWonItems.filter((item) => selected.includes(item.id)),
     [userWonItems, selected],
   );
 
   const selectedOverseasCount = useMemo(
-    () => selectedPlayers.filter((m) => isOverseasPlayer(m)).length,
-    [selectedPlayers],
+    () => selectedItems.filter((m) => isOverseasPlayer(m)).length,
+    [selectedItems],
   );
 
-  const roleCounts = useMemo(() => {
-    let batsmen = 0;
-    let keepers = 0;
-    let bowlers = 0;
-    let allRounders = 0;
-
-    selectedPlayers.forEach((m) => {
-      const badge = getRoleBadge(m.role, m.genre);
-      if (badge.label.includes("WICKETKEEPER")) keepers++;
-      else if (badge.label.includes("BATSMAN") || badge.label.includes("BATTER")) batsmen++;
-      else if (badge.label.includes("ALL-ROUNDER")) allRounders++;
-      else if (badge.label.includes("BOWLER")) bowlers++;
-    });
-
-    return { batsmen, keepers, bowlers, allRounders };
-  }, [selectedPlayers]);
-
   const toggleSelect = (item: OwnedMovie) => {
-    setSelectionNotice("");
+    setNotice("");
     if (selected.includes(item.id)) {
-      if (selected.length <= 1) return; // Keep at least 1
+      if (selected.length <= 1) return;
       setSelected(selected.filter((id) => id !== item.id));
       if (captainId === item.id) setCaptainId(undefined);
       if (viceCaptainId === item.id) setViceCaptainId(undefined);
     } else {
-      if (selected.length >= targetCount) {
-        setSelectionNotice(`Playing 11 is full (${targetCount}/${targetCount}). Click an existing player to swap.`);
+      if (selected.length >= maxSelectable) {
+        setNotice(isCricket ? "Playing 11 is full (11/11). Click an existing player to swap." : "Maximum 5 films selected for studio slate.");
         return;
       }
-
-      // Check overseas constraint
-      if (isCricket && isOverseasPlayer(item)) {
-        if (selectedOverseasCount >= 4) {
-          setSelectionNotice("Foreign Player Limit (Max 4): You already have 4 overseas players in your Playing 11.");
-          return;
-        }
+      if (isCricket && isOverseasPlayer(item) && selectedOverseasCount >= 4) {
+        setNotice("Overseas Quota (Max 4): You already have 4 foreign players in your Playing 11.");
+        return;
       }
-
       setSelected([...selected, item.id]);
     }
   };
@@ -1532,69 +1605,49 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
     setSelected(optimal.playing11);
     setCaptainId(optimal.captainId);
     setViceCaptainId(optimal.viceCaptainId);
-    setSelectionNotice("⚡ Optimal Playing 11 selected (Balanced roles, Max 4 Overseas).");
-  };
-
-  const handleStartRematch = () => {
-    navigate({ to: "/create" });
+    setNotice("⚡ Optimal Playing 11 selected (Balanced roles, Max 4 Overseas).");
   };
 
   return (
     <Page>
-      <main className="results-container max-w-5xl mx-auto px-4 sm:px-8 py-10 w-full flex flex-col items-center">
+      <main className="max-w-5xl mx-auto px-4 sm:px-8 py-10 w-full flex flex-col items-center">
         {step === "select" && (
           <section className="w-full flex flex-col items-center text-center">
             <GameStatus icon={<StarDot />}>
-              {isCricket ? "Championship XI Selection" : "Select Top 5 Slate"}
+              {isCricket ? "Championship XI Selection" : "Curate Your Studio Slate"}
             </GameStatus>
 
             <h1 className="font-display font-black text-3xl sm:text-5xl text-cream tracking-tight mt-2">
-              {isCricket ? "SUBMIT YOUR PLAYING 11" : "CURATE YOUR FESTIVAL PORTFOLIO"}
+              {isCricket ? "SUBMIT YOUR PLAYING 11" : "CURATE YOUR FINAL SLATE"}
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-2 max-w-xl">
               {isCricket
-                ? "Select your 11 match-winners from your squad of 12–18. Max 4 overseas players allowed. The AI Committee will simulate the tournament to determine the champion!"
-                : "Choose your top 5 movie titles to submit to the Grand Jury for final ranking."}
+                ? "Select your 11 match-winners from your squad. Max 4 overseas players. AI will simulate the tournament!"
+                : "Select your top 5 films from your acquired titles to submit for Grand Jury evaluation."}
             </p>
 
-            {/* Live Playing 11 Composition Bar */}
+            {/* Incomplete Movie Slate Warning */}
+            {!isCricket && userWonItems.length < 5 && userWonItems.length > 0 && (
+              <div className="p-3 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs rounded-xl max-w-lg mx-auto my-3">
+                ⚠️ <strong>Incomplete Studio Slate ({userWonItems.length}/5 movies):</strong> You acquired fewer than the required 5 movies. A penalty will be applied during scoring.
+              </div>
+            )}
+
+            {/* Cricket Playing 11 Bar */}
             {isCricket && userWonItems.length > 0 && (
               <div className="w-full my-4 p-4 rounded-2xl bg-panel/90 border border-gold/30 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
                 <div className="flex items-center gap-3 flex-wrap">
                   <div className="flex items-center gap-2">
                     <span className="text-xs uppercase font-bold text-muted-foreground">Playing 11:</span>
                     <span className={`text-sm font-black ${selected.length === 11 ? "text-emerald-400" : "text-gold"}`}>
-                      {selected.length} / {targetCount} Selected
+                      {selected.length} / {maxSelectable} Selected
                     </span>
                   </div>
-
-                  <span className="text-muted-foreground">•</span>
-
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span
-                      className={`px-2 py-0.5 rounded-lg border font-bold ${
-                        selectedOverseasCount > 4
-                          ? "bg-red-950/80 border-red-500 text-red-300"
-                          : "bg-cyan-950/60 border-cyan-500/40 text-cyan-300"
-                      }`}
-                    >
-                      ✈️ {selectedOverseasCount} / 4 Overseas
-                    </span>
-                  </div>
-
-                  <span className="text-muted-foreground">•</span>
-
-                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground flex-wrap">
-                    <span>🏏 {roleCounts.batsmen} Batsmen</span>
-                    <span>•</span>
-                    <span>🧤 {roleCounts.keepers} WKs</span>
-                    <span>•</span>
-                    <span>⚡ {roleCounts.allRounders} ARs</span>
-                    <span>•</span>
-                    <span>🎯 {roleCounts.bowlers} Bowlers</span>
-                  </div>
+                  <span>•</span>
+                  <span className={`px-2 py-0.5 rounded-lg border text-xs font-bold ${selectedOverseasCount > 4 ? "bg-red-950/80 border-red-500 text-red-300" : "bg-cyan-950/60 border-cyan-500/40 text-cyan-300"}`}>
+                    ✈️ {selectedOverseasCount} / 4 Overseas
+                  </span>
                 </div>
-
                 <button
                   type="button"
                   onClick={handleAutoPick}
@@ -1605,54 +1658,55 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
               </div>
             )}
 
-            {selectionNotice && (
+            {!isCricket && userWonItems.length > 0 && (
+              <div className="my-3 text-xs font-bold uppercase tracking-wider text-gold">
+                Selected <strong className="text-lg text-cream">{selected.length} / {maxSelectable}</strong>
+              </div>
+            )}
+
+            {notice && (
               <div className="p-3 rounded-xl bg-amber-950/60 border border-amber-500/50 text-amber-300 text-xs font-semibold mb-3 flex items-center gap-2">
-                <AlertCircle size={15} /> {selectionNotice}
+                <AlertCircle size={15} /> {notice}
               </div>
             )}
 
             {userWonItems.length === 0 ? (
               <div className="p-8 rounded-2xl bg-panel/80 border border-border mt-6 text-muted-foreground text-sm">
-                You did not win any items during this auction. Your evaluation will be based on preserved budget.
+                No items acquired during this session. Evaluation will be based on preserved budget.
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3.5 mt-4 w-full">
-                {userWonItems.map((item) => {
-                  const isSelected = selected.includes(item.id);
-                  const isCap = captainId === item.id;
-                  const isVC = viceCaptainId === item.id;
-
-                  return (
-                    <MovieCard
-                      key={item.id}
-                      movie={item}
-                      price={item.purchasePrice}
-                      selected={isSelected}
-                      isCaptain={isCap}
-                      isViceCaptain={isVC}
-                      onClick={() => toggleSelect(item)}
-                      onMakeCaptain={(e) => {
-                        e.stopPropagation();
-                        setCaptainId(isCap ? undefined : item.id);
-                        if (viceCaptainId === item.id) setViceCaptainId(undefined);
-                      }}
-                      onMakeViceCaptain={(e) => {
-                        e.stopPropagation();
-                        setViceCaptainId(isVC ? undefined : item.id);
-                        if (captainId === item.id) setCaptainId(undefined);
-                      }}
-                    />
-                  );
-                })}
+                {userWonItems.map((item) => (
+                  <MovieCard
+                    key={item.id}
+                    movie={item}
+                    price={item.purchasePrice}
+                    selected={selected.includes(item.id)}
+                    isCaptain={isCricket && captainId === item.id}
+                    isViceCaptain={isCricket && viceCaptainId === item.id}
+                    onClick={() => toggleSelect(item)}
+                    onMakeCaptain={(e) => {
+                      e.stopPropagation();
+                      setCaptainId(captainId === item.id ? undefined : item.id);
+                      if (viceCaptainId === item.id) setViceCaptainId(undefined);
+                    }}
+                    onMakeViceCaptain={(e) => {
+                      e.stopPropagation();
+                      setViceCaptainId(viceCaptainId === item.id ? undefined : item.id);
+                      if (captainId === item.id) setCaptainId(undefined);
+                    }}
+                  />
+                ))}
               </div>
             )}
 
             <button
               type="button"
+              disabled={userWonItems.length > 0 && selected.length === 0}
               onClick={() => setStep("evaluating")}
               className="btn btn-primary mt-8 px-10 py-4 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-gold/20 hover:brightness-110 flex items-center gap-2"
             >
-              <Trophy size={18} /> Submit Playing 11 for AI Championship Scoring
+              <Trophy size={18} /> {isCricket ? "Submit Playing 11 for Championship Scoring" : "Submit Studio Slate to Grand Jury"}
             </button>
           </section>
         )}
@@ -1661,11 +1715,25 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
           <section className="py-16 flex flex-col items-center gap-4 text-center">
             <LoaderCircle size={56} className="animate-spin text-gold" />
             <h2 className="font-display font-black text-2xl sm:text-3xl text-cream">
-              {isCricket ? "AI JURY IS SIMULATING IPL CHAMPIONSHIP..." : "TABULATING GRAND JURY STANDINGS..."}
+              {isCricket ? "SIMULATING IPL CHAMPIONSHIP TOURNAMENT..." : "GRAND JURY IS EVALUATING STUDIO SLATES..."}
             </h2>
-            <p className="text-xs sm:text-sm text-muted-foreground max-w-lg leading-relaxed">
-              Evaluating batting depth, bowling strike power, death overs mastery, overseas quota synergy, and franchise capital efficiency...
-            </p>
+            <div className="flex flex-col gap-2 text-xs sm:text-sm text-muted-foreground max-w-md">
+              {isCricket ? (
+                <>
+                  <span className="text-cyan-400 font-bold">🏏 Simulating top-order batting intent & strike rates...</span>
+                  <span>🎯 Auditing express bowling variety & death overs economy...</span>
+                  <span>⚡ Checking overseas quota balance & tactical depth...</span>
+                  <span>🏆 Tabulating IPL Franchise Championship Leaderboard...</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-gold font-bold">✨ Aggregating IMDb critical acclaim scores...</span>
+                  <span>💰 Calculating Box Office ROI & commercial yield...</span>
+                  <span>🎭 Auditing genre synergy & thematic balance...</span>
+                  <span>🏆 Tabulating Grand Jury Championship Leaderboard...</span>
+                </>
+              )}
+            </div>
           </section>
         )}
 
@@ -1676,11 +1744,13 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
               <GameStatus>Grand Championship Podium</GameStatus>
             </div>
 
-            <h1 className="font-display font-black text-4xl sm:text-6xl text-cream tracking-tight">
-              IPL LEADERBOARD
+            <h1 className="font-display font-black text-3xl sm:text-5xl text-cream tracking-tight">
+              {isCricket ? "IPL CHAMPIONSHIP LEADERBOARD" : "GRAND JURY LEADERBOARD"}
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-lg">
-              Official scoring tabulated across all 4 pillars by the AI Championship Committee.
+              {isCricket
+                ? "Official standings simulated across batting firepower, bowling lethality, team balance, and purse discipline."
+                : "Official standings evaluated across critical acclaim, commercial box office yield, genre synergy, and purse discipline."}
             </p>
 
             <RankingList players={room?.players ?? []} rankings={rankings} isCricket={isCricket} />
@@ -1688,7 +1758,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
             <div className="flex items-center gap-4 mt-8">
               <button
                 type="button"
-                onClick={handleStartRematch}
+                onClick={() => navigate({ to: "/create", search: { game: isCricket ? "cricket" : "cinema" } })}
                 className="btn btn-primary px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red to-rose-600 font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-red/25 flex items-center gap-2"
               >
                 <RotateCcw size={16} /> Start New Auction

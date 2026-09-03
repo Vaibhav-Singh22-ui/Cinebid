@@ -47,7 +47,9 @@ export function SiteHeader() {
           <img src={cinebidLogo} alt="Auction Hub Emblem" className="w-full h-full object-cover" />
         </div>
         <span className="font-black tracking-wider text-base sm:text-lg text-cream flex items-center gap-1.5 font-display">
-          IPL MEGA <span className="text-gold">AUCTION HUB</span>
+          CINE<span className="text-gold">BID</span>
+          <span className="text-muted-foreground/40 text-xs font-normal hidden sm:inline">|</span>
+          <span className="text-xs sm:text-sm text-amber-400 font-bold hidden sm:inline">IPL MEGA AUCTION</span>
         </span>
       </Link>
 
@@ -310,35 +312,49 @@ export function MovieCard({
         </div>
       )}
 
-      <div className="aspect-[3/4] w-full overflow-hidden relative">
+      <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full overflow-hidden relative bg-black/50`}>
         <Poster movie={movie} className="w-full h-full rounded-none" />
       </div>
 
       <div className="p-3 bg-panel/95 border-t border-border/70 flex flex-col justify-between flex-1">
         <div>
-          <div className="flex items-center gap-1.5 flex-wrap mb-1">
-            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${roleBadge.colorClass}`}>
-              {roleBadge.label}
-            </span>
-            <span
-              className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${
-                isOverseas
-                  ? "bg-amber-950/60 border-amber-500/30 text-amber-300"
-                  : "bg-blue-950/60 border-blue-500/30 text-blue-300"
-              }`}
-            >
-              {isOverseas ? "✈️ Overseas" : "🇮🇳 Indian"}
-            </span>
-          </div>
+          {isCricket ? (
+            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+              <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${roleBadge.colorClass}`}>
+                {roleBadge.label}
+              </span>
+              <span
+                className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${
+                  isOverseas
+                    ? "bg-amber-950/60 border-amber-500/30 text-amber-300"
+                    : "bg-blue-950/60 border-blue-500/30 text-blue-300"
+                }`}
+              >
+                {isOverseas ? "✈️ Overseas" : "🇮🇳 Indian"}
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-[10px] text-gold font-bold mb-1">
+              <span>{movie.year}</span>
+              <span>•</span>
+              <span className="truncate max-w-[130px]">{movie.genre}</span>
+            </div>
+          )}
 
           <strong className="block truncate text-xs sm:text-sm font-black text-cream group-hover:text-gold transition-colors">
             {movie.title}
           </strong>
+
+          {!isCricket && movie.director && (
+            <span className="block text-[10px] text-muted-foreground truncate mt-0.5">
+              Dir: {movie.director}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center justify-between text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
-          <span className="text-cyan-400 font-bold flex items-center gap-0.5 text-[11px]">
-            ★ {movie.imdbRating || 9.2}
+          <span className={`${isCricket ? "text-cyan-400" : "text-yellow-400"} font-bold flex items-center gap-0.5 text-[11px]`}>
+            ★ {movie.imdbRating || (isCricket ? 9.2 : 8.0)}
           </span>
           {price !== undefined && (
             <span className="text-gold font-bold font-mono">{formatCr(price)}</span>
@@ -449,7 +465,7 @@ export function PlayerCard({
                   : "text-amber-300"
             }`}
           >
-            <Award size={11} />
+            {isCricket ? <Award size={11} /> : <Film size={11} className="text-gold" />}
             {isCricket ? `Squad: ${wonCount}/18` : `${wonCount}/5 won`}
           </span>
 
