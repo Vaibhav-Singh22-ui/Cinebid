@@ -57,6 +57,13 @@ export interface OwnedMovie extends Movie {
   purchasedByName?: string;
 }
 
+export interface SubmittedSlate {
+  movieIds: string[];
+  captainId?: string;
+  viceCaptainId?: string;
+  submittedAt: number;
+}
+
 export interface Player {
   id: string;
   name: string; // Franchise / Producer Name (chosen by the human/bot player)
@@ -68,6 +75,8 @@ export interface Player {
   avatar: string;
   color?: string | undefined;
   ready?: boolean | undefined;
+  submittedTop5?: string[] | undefined;
+  isSlateSubmitted?: boolean | undefined;
 }
 
 export interface RoomSettings {
@@ -77,6 +86,8 @@ export interface RoomSettings {
   totalMovies: number;
   category?: string | undefined;
   auctionType?: AuctionType;
+  submittedSlates?: Record<string, SubmittedSlate> | undefined;
+  portfolioRankings?: any[] | undefined;
 }
 
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
@@ -89,6 +100,20 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
 };
 
 export const formatCr = (amount: number) => `₹${amount} Cr`;
+
+/**
+ * Computes an optimal 5-movie studio slate by ranking IMDb rating and box office power
+ */
+export function getOptimalMovieSlate(movies: OwnedMovie[]): string[] {
+  if (!movies || movies.length === 0) return [];
+  if (movies.length <= 5) return movies.map((m) => m.id);
+  const sorted = [...movies].sort((a, b) => {
+    const scoreA = (a.imdbRating || 7.0) * 12 + Math.min(40, (a.boxOffice || 100) / 25);
+    const scoreB = (b.imdbRating || 7.0) * 12 + Math.min(40, (b.boxOffice || 100) / 25);
+    return scoreB - scoreA;
+  });
+  return sorted.slice(0, 5).map((m) => m.id);
+}
 
 /**
  * Recommended item pool quantity based on player count and auction type.

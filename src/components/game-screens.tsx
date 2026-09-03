@@ -4,14 +4,18 @@ import {
   AlertCircle,
   Award,
   Check,
+  CheckCircle2,
   ChevronRight,
+  Clock,
   Copy,
   Crown,
+  Edit3,
   Film,
   Flame,
   Gavel,
   Info,
   LoaderCircle,
+  Lock,
   Medal,
   Play,
   RotateCcw,
@@ -39,6 +43,7 @@ import {
 } from "@/components/game-ui";
 import {
   formatCr,
+  getOptimalMovieSlate,
   getRandomizedMovieSlate,
   getRecommendedMoviePoolSize,
   movies,
@@ -59,6 +64,7 @@ import {
   createRoom,
   evaluateAllRoomPlayers,
   fetchRemoteRoom,
+  forceStartEvaluation,
   getCurrentUser,
   getOrCreateRoom,
   getRoom,
@@ -69,7 +75,9 @@ import {
   resolveCurrentAuction,
   saveRoom,
   setCurrentUser,
+  submitPlayerSlate,
   subscribeToMultiplayerRoom,
+  unsubmitPlayerSlate,
   type PlayerScore,
   type RoomState,
 } from "@/lib/game-manager";
@@ -987,7 +995,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
         prevBidRef.current = fresh.currentBid;
       }
       setRoom(fresh);
-      if (fresh.status === "TOP_FIVE" || fresh.status === "RESULTS") {
+      if (fresh.status === "TOP_FIVE" || fresh.status === "EVALUATING" || fresh.status === "RESULTS") {
         navigate({ to: "/results/$roomCode", params: { roomCode: code } });
       }
     });
@@ -1504,13 +1512,13 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
 }
 
 // -------------------------------------------------------------
-// 5. RESULTS SCREEN (DEDICATED SLATE / PLAYING 11 & LEADERBOARD)
+// -------------------------------------------------------------
+// 5. RESULTS SCREEN (SYNCHRONIZED SLATE SUBMISSION & GRAND JURY)
 // -------------------------------------------------------------
 export function ResultsScreen({ roomCode }: { roomCode: string }) {
   const code = roomCode.toUpperCase();
   const navigate = useNavigate();
   const [room, setRoom] = useState<RoomState | null>(() => getOrCreateRoom(code));
-  const [step, setStep] = useState<"select" | "evaluating" | "final">("select");
   const currentUser = getCurrentUser();
   const me = room?.players.find((p) => p.id === currentUser.id) || room?.players[0];
 
@@ -1520,21 +1528,38 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
   // Default optimal selection
   const initialOptimal = useMemo(() => {
     if (isCricket) return getOptimalPlaying11(userWonItems);
-    return { playing11: userWonItems.slice(0, 5).map((m) => m.id) };
+    return { playing11: getOptimalMovieSlate(userWonItems) };
   }, [isCricket, userWonItems]);
 
-  const [selected, setSelected] = useState<string[]>(() => initialOptimal.playing11);
-  const [captainId, setCaptainId] = useState<string | undefined>(() => initialOptimal.captainId);
-  const [viceCaptainId, setViceCaptainId] = useState<string | undefined>(() => initialOptimal.viceCaptainId);
-  const [notice, setNotice] = useState<string>("");
-  const [rankings, setRankings] = useState<PlayerScore[]>([]);
+  const existingSubmission = room?.submittedSlates?.[currentUser.id];
 
+  const [selected, setSelected] = useState<string[]>(() => existingSubmission?.movieIds || initialOptimal.playing11);
+  const [captainId, setCaptainId] = useState<string | undefined>(() => existingSubmission?.captainId || initialOptimal.captainId);
+  const [viceCaptainId, setViceCaptainId] = useState<string | undefined>(() => existingSubmission?.viceCaptainId || initialOptimal.viceCaptainId);
+  const [notice, setNotice] = useState<string>("");
+  const [rankings, setRankings] = useState<PlayerScore[]>(() => room?.portfolioRankings || []);
+
+  const getInitialStep = (): "select" | "waiting" | "evaluating" | "final" => {
+    if (room?.portfolioRankings && room.portfolioRankings.length > 0) return "final";
+    if (room?.status === "RESULTS") return "final";
+    if (room?.status === "EVALUATING") return "evaluating";
+    if (room?.submittedSlates?.[currentUser.id]?.movieIds?.length) return "waiting";
+    return "select";
+  };
+
+  const [step, setStep] = useState<"select" | "waiting" | "evaluating" | "final">(getInitialStep);
+
+  // Synchronize state with real-time multiplayer updates
   useEffect(() => {
     const activeRoom = getOrCreateRoom(code);
     setRoom(activeRoom);
     if (activeRoom.portfolioRankings && activeRoom.portfolioRankings.length > 0) {
       setRankings(activeRoom.portfolioRankings);
       setStep("final");
+    } else if (activeRoom.status === "EVALUATING") {
+      setStep("evaluating");
+    } else if (activeRoom.submittedSlates?.[currentUser.id]?.movieIds?.length) {
+      setStep((prev) => (prev === "select" ? "waiting" : prev));
     }
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
@@ -1542,18 +1567,35 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
       if (fresh.portfolioRankings && fresh.portfolioRankings.length > 0) {
         setRankings(fresh.portfolioRankings);
         setStep("final");
+      } else if (fresh.status === "EVALUATING") {
+        setStep("evaluating");
+      } else if (fresh.submittedSlates?.[currentUser.id]?.movieIds?.length) {
+        setStep((prev) => (prev === "select" ? "waiting" : prev));
       }
     });
 
     return () => unsubscribe();
-  }, [code]);
+  }, [code, currentUser.id]);
+
+  // Execute Grand Jury evaluation when all players have submitted
+  const isEvaluatingRef = useRef(false);
 
   useEffect(() => {
-    if (step !== "evaluating") return;
+    const shouldEvaluate = (room?.status === "EVALUATING" || step === "evaluating") && (!rankings || rankings.length === 0);
+    if (!shouldEvaluate) return;
+    if (room?.portfolioRankings && room.portfolioRankings.length > 0) {
+      setRankings(room.portfolioRankings);
+      setStep("final");
+      return;
+    }
+
+    if (isEvaluatingRef.current) return;
+    isEvaluatingRef.current = true;
+
     let isMounted = true;
     const runEvaluation = async () => {
       try {
-        const scores = await evaluateAllRoomPlayers(code, selected);
+        const scores = await evaluateAllRoomPlayers(code);
         if (isMounted) {
           setRankings(scores);
           setStep("final");
@@ -1566,7 +1608,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
     return () => {
       isMounted = false;
     };
-  }, [step, code, selected]);
+  }, [step, room?.status, room?.portfolioRankings, code, rankings]);
 
   const maxSelectable = isCricket ? Math.min(11, Math.max(1, userWonItems.length)) : Math.min(5, Math.max(1, userWonItems.length));
 
@@ -1579,6 +1621,26 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
     () => selectedItems.filter((m) => isOverseasPlayer(m)).length,
     [selectedItems],
   );
+
+  const isHost = room?.hostId === currentUser.id || room?.players[0]?.id === currentUser.id;
+
+  const activeHumanPlayers = useMemo(
+    () => room?.players.filter((p) => !p.isBot && p.movies.length > 0) || [],
+    [room?.players],
+  );
+
+  const submittedHumanCount = useMemo(
+    () => activeHumanPlayers.filter((p) => Boolean(room?.submittedSlates?.[p.id]?.movieIds?.length)).length,
+    [activeHumanPlayers, room?.submittedSlates],
+  );
+
+  const totalRequired = Math.max(1, activeHumanPlayers.length);
+  const progressPercent = Math.min(100, Math.round((submittedHumanCount / totalRequired) * 100));
+
+  const lockedSelectedItems = useMemo(() => {
+    const ids = room?.submittedSlates?.[currentUser.id]?.movieIds || selected;
+    return userWonItems.filter((item) => ids.includes(item.id));
+  }, [room?.submittedSlates, currentUser.id, selected, userWonItems]);
 
   const toggleSelect = (item: OwnedMovie) => {
     setNotice("");
@@ -1601,11 +1663,46 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
   };
 
   const handleAutoPick = () => {
-    const optimal = getOptimalPlaying11(userWonItems);
-    setSelected(optimal.playing11);
-    setCaptainId(optimal.captainId);
-    setViceCaptainId(optimal.viceCaptainId);
-    setNotice("⚡ Optimal Playing 11 selected (Balanced roles, Max 4 Overseas).");
+    if (isCricket) {
+      const optimal = getOptimalPlaying11(userWonItems);
+      setSelected(optimal.playing11);
+      setCaptainId(optimal.captainId);
+      setViceCaptainId(optimal.viceCaptainId);
+      setNotice("⚡ Optimal Playing 11 selected (Balanced roles, Max 4 Overseas).");
+    } else {
+      const optimal = getOptimalMovieSlate(userWonItems);
+      setSelected(optimal);
+      setNotice("⚡ Top 5 films selected based on IMDb acclaim and box office yield.");
+    }
+  };
+
+  const handleSubmitSlate = () => {
+    if (userWonItems.length > 0 && selected.length === 0) return;
+    const { room: updatedRoom, allSubmitted } = submitPlayerSlate(
+      code,
+      currentUser.id,
+      selected,
+      captainId,
+      viceCaptainId,
+    );
+    setRoom({ ...updatedRoom });
+    if (allSubmitted) {
+      setStep("evaluating");
+    } else {
+      setStep("waiting");
+    }
+  };
+
+  const handleEditSlate = () => {
+    const updated = unsubmitPlayerSlate(code, currentUser.id);
+    if (updated) setRoom({ ...updated });
+    setStep("select");
+  };
+
+  const handleForceStart = () => {
+    const updated = forceStartEvaluation(code);
+    if (updated) setRoom({ ...updated });
+    setStep("evaluating");
   };
 
   return (
@@ -1622,14 +1719,37 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-2 max-w-xl">
               {isCricket
-                ? "Select your 11 match-winners from your squad. Max 4 overseas players. AI will simulate the tournament!"
-                : "Select your top 5 films from your acquired titles to submit for Grand Jury evaluation."}
+                ? "Select your 11 match-winners from your squad. Max 4 overseas players. The Grand Jury simulation will begin once every franchise submits!"
+                : "Select your top 5 films from your acquired titles. Grand Jury evaluation will start only after every player submits their slate!"}
             </p>
 
             {/* Incomplete Movie Slate Warning */}
             {!isCricket && userWonItems.length < 5 && userWonItems.length > 0 && (
               <div className="p-3 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs rounded-xl max-w-lg mx-auto my-3">
                 ⚠️ <strong>Incomplete Studio Slate ({userWonItems.length}/5 movies):</strong> You acquired fewer than the required 5 movies. A penalty will be applied during scoring.
+              </div>
+            )}
+
+            {/* Multiplayer Realtime Status Banner */}
+            {activeHumanPlayers.length > 1 && (
+              <div className="w-full max-w-xl my-3 p-3.5 rounded-2xl bg-panel/90 border border-cyan-500/40 shadow-lg flex items-center justify-between gap-3 text-left">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping" />
+                  <div>
+                    <div className="text-xs font-bold text-cream flex items-center gap-2">
+                      <span>{submittedHumanCount} of {totalRequired} {isCricket ? "Franchises" : "Producers"} Submitted</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/40">
+                        Live Room
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      Everyone gets to pick their Top 5. Grand Jury commences when all players lock in!
+                    </div>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 text-xs font-black flex-shrink-0">
+                  {progressPercent}%
+                </span>
               </div>
             )}
 
@@ -1659,8 +1779,20 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
             )}
 
             {!isCricket && userWonItems.length > 0 && (
-              <div className="my-3 text-xs font-bold uppercase tracking-wider text-gold">
-                Selected <strong className="text-lg text-cream">{selected.length} / {maxSelectable}</strong>
+              <div className="w-full my-4 p-4 rounded-2xl bg-panel/90 border border-gold/30 shadow-xl flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs uppercase font-bold text-muted-foreground">Studio Slate:</span>
+                  <span className={`text-sm font-black ${selected.length === 5 ? "text-emerald-400" : "text-gold"}`}>
+                    {selected.length} / {maxSelectable} Selected
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAutoPick}
+                  className="btn btn-secondary text-xs px-3 py-2 rounded-xl border border-gold/40 text-gold hover:bg-gold/10 font-bold flex items-center gap-1.5 flex-shrink-0"
+                >
+                  <Sparkles size={14} /> Auto-Pick Top 5 Films
+                </button>
               </div>
             )}
 
@@ -1703,11 +1835,195 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
             <button
               type="button"
               disabled={userWonItems.length > 0 && selected.length === 0}
-              onClick={() => setStep("evaluating")}
+              onClick={handleSubmitSlate}
               className="btn btn-primary mt-8 px-10 py-4 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-gold/20 hover:brightness-110 flex items-center gap-2"
             >
-              <Trophy size={18} /> {isCricket ? "Submit Playing 11 for Championship Scoring" : "Submit Studio Slate to Grand Jury"}
+              <Trophy size={18} /> {isCricket ? "Lock Playing 11 & Submit" : "Lock Top 5 & Submit to Grand Jury"}
             </button>
+          </section>
+        )}
+
+        {step === "waiting" && (
+          <section className="w-full flex flex-col items-center text-center max-w-4xl">
+            <GameStatus icon={<Lock size={14} className="text-emerald-400" />}>
+              Studio Slate Secured In Grand Jury Vault
+            </GameStatus>
+
+            <h1 className="font-display font-black text-3xl sm:text-5xl text-cream tracking-tight mt-2">
+              WAITING FOR OTHER {isCricket ? "FRANCHISES" : "PRODUCERS"}
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-2 max-w-xl">
+              Your {isCricket ? "Playing 11" : "5-film slate"} is locked in the vault. The Grand Jury will convene automatically once every producer submits their top selections!
+            </p>
+
+            {/* Live Synchronized Progress Card */}
+            <div className="w-full mt-6 p-6 rounded-3xl bg-panel/90 border border-gold/30 shadow-2xl flex flex-col gap-4 text-left">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock size={18} className="text-gold animate-spin" style={{ animationDuration: "6s" }} />
+                  <span className="text-xs sm:text-sm font-black text-cream uppercase tracking-wider">
+                    {isCricket ? "Franchise Submissions Progress" : "Producer Submissions Progress"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-muted-foreground">Status:</span>
+                  <span className="text-sm sm:text-base font-black text-gold">
+                    {submittedHumanCount} / {totalRequired} Ready
+                  </span>
+                </div>
+              </div>
+
+              {/* Glowing Progress Bar */}
+              <div className="w-full h-3 rounded-full bg-slate-900 overflow-hidden border border-white/10 relative">
+                <div
+                  className="h-full bg-gradient-to-r from-gold via-amber-400 to-emerald-400 transition-all duration-500 ease-out rounded-full shadow-[0_0_12px_rgba(234,179,8,0.5)]"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+
+              <div className="text-[11px] sm:text-xs text-muted-foreground flex items-center justify-between">
+                <span>⚡ Everyone waits until all players lock in their top 5 selections</span>
+                <span className="text-emerald-400 font-bold">{progressPercent}% complete</span>
+              </div>
+            </div>
+
+            {/* Players Status Roster Grid */}
+            <div className="w-full mt-6 flex flex-col gap-3 text-left">
+              <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground px-1">
+                Room Competitors ({room?.players.length || 0})
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {room?.players.map((player) => {
+                  const isCurrent = player.id === currentUser.id;
+                  const isSubmitted = Boolean(room.submittedSlates?.[player.id]?.movieIds?.length);
+                  const isZeroWon = player.movies.length === 0;
+
+                  return (
+                    <div
+                      key={player.id}
+                      className={`p-4 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                        isSubmitted
+                          ? "bg-emerald-950/20 border-emerald-500/40 shadow-lg shadow-emerald-950/30"
+                          : player.isBot
+                          ? "bg-panel/60 border-border/70"
+                          : "bg-panel/90 border-amber-500/30 shadow-md shadow-amber-950/20"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-black text-sm flex-shrink-0 shadow-md"
+                          style={{ backgroundColor: player.color || "#f5c518" }}
+                        >
+                          {player.avatar || "CB"}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold text-sm text-cream truncate flex items-center gap-1.5">
+                            <span className="truncate">{player.name}</span>
+                            {isCurrent && (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-black bg-gold/20 text-gold border border-gold/30">
+                                YOU
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {player.movies.length} acquired • {player.isBot ? "AI Bot" : "Producer"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex-shrink-0">
+                        {isSubmitted ? (
+                          <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-950/80 text-emerald-400 border border-emerald-500/50 flex items-center gap-1 shadow-sm">
+                            <CheckCircle2 size={12} /> Ready
+                          </span>
+                        ) : player.isBot ? (
+                          <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-cyan-950/60 text-cyan-300 border border-cyan-500/30 flex items-center gap-1">
+                            🤖 Auto
+                          </span>
+                        ) : isZeroWon ? (
+                          <span className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-900 text-muted-foreground border border-white/10">
+                            0 Items
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-950/70 text-amber-300 border border-amber-500/40 flex items-center gap-1 animate-pulse">
+                            <Clock size={12} /> Selecting...
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Your Locked Slate Preview */}
+            <div className="w-full mt-8 flex flex-col text-left">
+              <div className="flex items-center justify-between mb-3 px-1">
+                <div className="flex items-center gap-2">
+                  <Shield size={16} className="text-gold" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-cream">
+                    Your Locked {isCricket ? "Playing 11" : "Studio Slate"} ({lockedSelectedItems.length} items)
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleEditSlate}
+                  className="text-xs text-gold hover:text-amber-300 font-bold flex items-center gap-1 transition-colors px-3 py-1.5 rounded-xl border border-gold/30 hover:bg-gold/10"
+                >
+                  <Edit3 size={13} /> Edit My Selection
+                </button>
+              </div>
+
+              {lockedSelectedItems.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-panel/80 border border-border text-center text-muted-foreground text-xs">
+                  No items acquired during this auction. Preserved purse discipline will be evaluated.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 w-full">
+                  {lockedSelectedItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="p-3.5 rounded-2xl bg-panel/90 border border-emerald-500/40 shadow-lg relative flex flex-col gap-2"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-emerald-400 font-black flex items-center gap-1">
+                          <Check size={12} /> Locked
+                        </span>
+                        {item.imdbRating && (
+                          <span className="text-yellow-400 font-bold">★ {item.imdbRating}</span>
+                        )}
+                      </div>
+                      <div className="font-bold text-xs text-cream line-clamp-1">{item.title}</div>
+                      <div className="text-[10px] text-muted-foreground flex items-center justify-between mt-auto">
+                        <span>{item.year || item.role}</span>
+                        <span className="text-gold font-bold">{formatCr(item.purchasePrice || item.basePrice)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Action Bar */}
+            <div className="flex items-center justify-center gap-4 mt-8 flex-wrap">
+              <button
+                type="button"
+                onClick={handleEditSlate}
+                className="btn btn-secondary px-6 py-3 rounded-2xl border border-white/20 text-cream hover:bg-white/10 font-bold text-xs flex items-center gap-2"
+              >
+                <Edit3 size={15} /> Modify My Top 5
+              </button>
+
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={handleForceStart}
+                  className="btn btn-primary px-8 py-3 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-gold/20 hover:brightness-110 flex items-center gap-2"
+                >
+                  <Zap size={15} /> Force Start Grand Jury (Host Bypass)
+                </button>
+              )}
+            </div>
           </section>
         )}
 

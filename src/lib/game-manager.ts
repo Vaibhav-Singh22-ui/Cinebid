@@ -1,6 +1,7 @@
 import {
   DEFAULT_ROOM_SETTINGS,
   formatCr,
+  getOptimalMovieSlate,
   getRandomizedMovieSlate,
   getRecommendedMoviePoolSize,
   movies,
@@ -9,6 +10,7 @@ import {
   type OwnedMovie,
   type Player,
   type RoomSettings,
+  type SubmittedSlate,
 } from "./game-data";
 import { isOverseasPlayer, getOptimalPlaying11 } from "./cricket-data";
 import { supabase } from "@/integrations/supabase/client";
@@ -74,6 +76,7 @@ export interface RoomState {
   portfolioRankings?: PlayerScore[] | undefined;
   outPlayerIds: string[]; // List of player IDs who clicked OUT on current item
   auctionType?: AuctionType;
+  submittedSlates?: Record<string, SubmittedSlate> | undefined;
 }
 
 export interface CurrentUser {
@@ -518,6 +521,16 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
   try {
     const code = room.roomCode.toUpperCase();
 
+    if (!room.settings) {
+      room.settings = { ...DEFAULT_ROOM_SETTINGS };
+    }
+    if (room.submittedSlates) {
+      room.settings.submittedSlates = room.submittedSlates;
+    }
+    if (room.portfolioRankings) {
+      room.settings.portfolioRankings = room.portfolioRankings;
+    }
+
     // 1. Upsert room record
     await supabase.from("rooms").upsert(
       {
@@ -689,6 +702,8 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       chatMessages: Array.from(chatMap.values()).sort((a, b) => a.timestamp - b.timestamp),
       outPlayerIds: local?.outPlayerIds || [],
       auctionType,
+      submittedSlates: (settings as any)?.submittedSlates || local?.submittedSlates || {},
+      portfolioRankings: (settings as any)?.portfolioRankings || local?.portfolioRankings,
     };
 
     saveRoom(parsedRoom, true);
@@ -1254,8 +1269,94 @@ export function advanceToNextMovie(roomCode: string): RoomState | null {
 }
 
 // -------------------------------------------------------------
-// 8. PORTFOLIO & SQUAD EVALUATION ALGORITHM
+// 8. SLATE SUBMISSION & GRAND JURY EVALUATION ALGORITHM
 // -------------------------------------------------------------
+
+/**
+ * Submit a player's final 5-film slate or Playing 11 for the Grand Jury / Championship.
+ * The Grand Jury will NOT start until EVERY player with acquired items has submitted their slate.
+ */
+export function submitPlayerSlate(
+  roomCode: string,
+  playerId: string,
+  movieIds: string[],
+  captainId?: string,
+  viceCaptainId?: string,
+): { room: RoomState; allSubmitted: boolean } {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) throw new Error("Room not found");
+
+  if (!room.submittedSlates) {
+    room.submittedSlates = {};
+  }
+
+  room.submittedSlates[playerId] = {
+    movieIds,
+    captainId,
+    viceCaptainId,
+    submittedAt: Date.now(),
+  };
+
+  const targetPlayer = room.players.find((p) => p.id === playerId);
+  if (targetPlayer) {
+    targetPlayer.submittedTop5 = movieIds;
+    targetPlayer.isSlateSubmitted = true;
+  }
+
+  if (!room.settings) {
+    room.settings = { ...DEFAULT_ROOM_SETTINGS };
+  }
+  room.settings.submittedSlates = room.submittedSlates;
+
+  // Check if all human players with won items have submitted
+  const activeHumans = room.players.filter((p) => !p.isBot && p.movies.length > 0);
+  const allSubmitted =
+    activeHumans.length === 0 ||
+    activeHumans.every((p) => Boolean(room.submittedSlates?.[p.id]?.movieIds?.length));
+
+  if (allSubmitted) {
+    room.status = "EVALUATING";
+  }
+
+  saveRoom(room);
+  return { room, allSubmitted };
+}
+
+/**
+ * Allows a player to recall and edit their submitted slate while waiting for others
+ */
+export function unsubmitPlayerSlate(roomCode: string, playerId: string): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room || room.status === "EVALUATING" || room.status === "RESULTS") return room;
+
+  if (room.submittedSlates && room.submittedSlates[playerId]) {
+    delete room.submittedSlates[playerId];
+    if (room.settings?.submittedSlates) {
+      delete room.settings.submittedSlates[playerId];
+    }
+    const player = room.players.find((p) => p.id === playerId);
+    if (player) {
+      player.isSlateSubmitted = false;
+    }
+    saveRoom(room);
+  }
+  return room;
+}
+
+/**
+ * Host bypass to begin Grand Jury evaluation immediately if an active player is AFK
+ */
+export function forceStartEvaluation(roomCode: string): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return null;
+  room.status = "EVALUATING";
+  saveRoom(room);
+  return room;
+}
+
 export async function evaluateAllRoomPlayers(
   roomCode: string,
   userSelectedTop5?: string[],
@@ -1266,20 +1367,36 @@ export async function evaluateAllRoomPlayers(
 
   const user = getCurrentUser();
   const userMap: Record<string, string[]> = {};
+
+  // 1. Gather all slates submitted by players in the room
+  if (room.submittedSlates) {
+    Object.entries(room.submittedSlates).forEach(([pid, slate]) => {
+      if (slate?.movieIds?.length) {
+        userMap[pid] = slate.movieIds;
+      }
+    });
+  }
+
+  // 2. Direct argument takes precedence for current user if passed
   if (userSelectedTop5?.length) {
     userMap[user.id] = userSelectedTop5;
   }
 
-  // Automatically compute optimal Playing 11 (max 4 overseas, 1 WK, balanced roles) for bots and unselected players
-  const isCricket = room.auctionType === "CRICKET" || room.players.some((p) => p.movies.some((m) => m.auctionType === "CRICKET" || m.role));
-  if (isCricket) {
-    room.players.forEach((p) => {
-      if (p.isBot || !userMap[p.id] || userMap[p.id]!.length === 0) {
+  const isCricket =
+    room.auctionType === "CRICKET" ||
+    room.players.some((p) => p.movies.some((m) => m.auctionType === "CRICKET" || m.role));
+
+  // 3. For any bots or players who did not submit in time, calculate their optimal slate
+  room.players.forEach((p) => {
+    if (!userMap[p.id] || userMap[p.id]!.length === 0) {
+      if (isCricket) {
         const optimal = getOptimalPlaying11(p.movies);
         userMap[p.id] = optimal.playing11;
+      } else {
+        userMap[p.id] = getOptimalMovieSlate(p.movies);
       }
-    });
-  }
+    }
+  });
 
   const scores = await evaluatePortfoliosWithAi(
     room.players,
@@ -1288,6 +1405,8 @@ export async function evaluateAllRoomPlayers(
   );
 
   room.portfolioRankings = scores;
+  if (!room.settings) room.settings = { ...DEFAULT_ROOM_SETTINGS };
+  room.settings.portfolioRankings = scores;
   room.status = "RESULTS";
   saveRoom(room);
 
