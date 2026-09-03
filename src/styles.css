@@ -490,55 +490,64 @@
   @apply flex h-full flex-col rounded-xl border border-border bg-panel p-5;
 }
 .room-chat {
-  @apply rounded-lg border border-border bg-panel p-4 text-left;
+  @apply flex flex-col overflow-hidden text-left;
 }
 .standings .room-chat {
-  @apply mt-5;
+  @apply mt-3;
 }
 .room-chat-heading {
-  @apply flex items-center gap-2 border-b border-border pb-3 text-gold;
+  @apply flex items-center justify-between border-b border-border/80 pb-2.5 text-gold;
 }
 .room-chat-icon {
-  @apply grid h-8 w-8 place-items-center rounded-md bg-gold/10;
+  @apply grid h-7 w-7 place-items-center rounded-lg bg-gold/15 text-gold;
 }
-.room-chat-heading h2 {
-  @apply text-base font-black text-cream;
-}
+
+/* Real-world sleek chat scroll container */
 .chat-messages {
-  @apply mt-3 flex h-44 flex-col gap-3 overflow-y-auto pr-1;
+  @apply flex flex-1 min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain pr-1;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(234, 179, 8, 0.3) transparent;
 }
-.chat-message {
-  @apply flex flex-col gap-1 text-sm;
+.chat-messages::-webkit-scrollbar {
+  width: 4px;
 }
-.chat-message strong {
-  @apply text-xs font-black text-gold;
+.chat-messages::-webkit-scrollbar-track {
+  background: transparent;
 }
-.chat-message span {
-  @apply break-words text-cream;
+.chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(234, 179, 8, 0.25);
+  border-radius: 9999px;
 }
+.chat-messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(234, 179, 8, 0.5);
+}
+
+.chat-message-entry {
+  animation: chatMsgIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes chatMsgIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .chat-empty {
-  @apply my-auto text-center text-sm text-muted-foreground;
+  @apply my-auto text-center text-xs text-muted-foreground;
 }
 .chat-form {
-  @apply mt-3 border-t border-border pt-3;
-}
-.chat-emoji-row {
-  @apply mb-2 flex items-center gap-1 text-muted-foreground;
-}
-.chat-emoji-row button {
-  @apply grid h-7 w-7 place-items-center rounded-md text-sm hover:bg-panel-strong;
+  @apply border-t border-border/70 pt-2;
 }
 .chat-compose {
-  @apply flex items-center gap-2 rounded-md border border-border bg-cinema p-1;
-}
-.chat-compose input {
-  @apply h-10 min-w-0 flex-1 bg-transparent px-2 text-sm text-cream outline-none placeholder:text-muted-foreground;
-}
-.chat-compose button {
-  @apply grid h-10 w-10 shrink-0 place-items-center rounded-md bg-red text-primary-foreground hover:bg-red/85 disabled:opacity-40;
+  @apply flex items-center gap-1.5 rounded-xl border border-border/80 bg-black/50 p-1;
 }
 .chat-error {
-  @apply mt-2 text-xs text-red;
+  @apply mt-1 text-[11px] text-red-400;
 }
 .standings-title {
   @apply mb-5 flex items-center justify-between border-b border-border pb-4 text-gold;

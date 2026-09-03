@@ -909,8 +909,8 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
           </div>
 
           {/* Right Chat Sidebar */}
-          <aside className="lg:col-span-4 bg-panel/90 border border-border/80 rounded-3xl p-4 shadow-xl flex flex-col">
-            <RoomChat roomCode={code} playerName={currentUser.name} />
+          <aside className="lg:col-span-4 flex flex-col h-full min-h-[480px]">
+            <RoomChat roomCode={code} playerName={currentUser.name} className="h-full min-h-[480px] max-h-[560px]" />
           </aside>
         </section>
 
@@ -1359,8 +1359,8 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
         </section>
 
         {/* RIGHT COLUMN: Standings & Live War-Room Chat */}
-        <aside className="lg:col-span-12 xl:col-span-4 flex flex-col gap-3">
-          <div className="bg-panel/90 border border-border/80 rounded-2xl p-4 shadow-xl flex flex-col gap-2">
+        <aside className="lg:col-span-12 xl:col-span-4 flex flex-col gap-3 min-h-0">
+          <div className="bg-panel/90 border border-border/80 rounded-2xl p-4 shadow-xl flex flex-col gap-2 flex-shrink-0">
             <div className="flex items-center justify-between">
               <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-black">
                 {isCricket ? "Franchise Bidders Status" : "Studio Producers Status"}
@@ -1368,7 +1368,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
               <span className="text-[10px] text-muted-foreground">Live Room</span>
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto pr-1">
               {room.players.map((p) => {
                 const isLeading = p.id === room.currentBidderId;
                 const isOut = room.outPlayerIds?.includes(p.id);
@@ -1389,7 +1389,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
           <RoomChat
             roomCode={room.roomCode}
             playerName={currentUser.name}
-            className="rounded-2xl p-4"
+            className="h-[430px] lg:h-[450px] max-h-[450px]"
           />
         </aside>
 
