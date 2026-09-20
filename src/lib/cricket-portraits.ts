@@ -373,7 +373,7 @@ export async function getRealCricketerPhoto(
             const data = await resp.json();
             const sourceUrl = data.originalimage?.source || data.thumbnail?.source;
             if (sourceUrl && typeof sourceUrl === "string" && sourceUrl.startsWith("http")) {
-              const clean = sourceUrl.split("?")[0];
+              const clean = sourceUrl.split("?")[0] || sourceUrl;
               portraitMemoryCache.set(cleanId, clean);
               if (typeof window !== "undefined") {
                 try {

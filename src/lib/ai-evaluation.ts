@@ -57,16 +57,16 @@ export interface EvaluationPayload {
       boxOffice: number;
       director: string;
       purchasePrice: number;
-      role?: string;
-      country?: string;
-      signatureSkill?: string;
+      role?: string | undefined;
+      country?: string | undefined;
+      signatureSkill?: string | undefined;
     }>;
   }>;
 }
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
-const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY || "";
-const BACKUP_AI_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
+const GROQ_API_KEY = import.meta.env["VITE_GROQ_API_KEY"] || "";
+const OPENAI_API_KEY = import.meta.env["VITE_OPENAI_API_KEY"] || "";
+const BACKUP_AI_KEY = import.meta.env["VITE_GEMINI_API_KEY"] || "";
 
 const GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
 const OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"];

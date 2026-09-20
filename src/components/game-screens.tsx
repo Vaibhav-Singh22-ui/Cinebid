@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
   Award,
+  BookOpen,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -14,23 +15,35 @@ import {
   Flame,
   Gavel,
   Info,
+  ListFilter,
   LoaderCircle,
   Lock,
   Medal,
+  Pause,
   Play,
+  Radio,
   RotateCcw,
   Shield,
   Shuffle,
   Sparkles,
   Star,
+  Timer,
   Trophy,
   Users,
+  Wallet,
   XCircle,
   Zap,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { RoomChat } from "@/components/room-chat";
 import {
   AuctionTimer,
+  AuctionTopTabs,
   EmptyMovieSlot,
   GameStatus,
   getRoleBadge,
@@ -61,11 +74,14 @@ import {
 import {
   advanceToNextMovie,
   broadcastRoomState,
+  bumpRoomVersion,
   createRoom,
   evaluateAllRoomPlayers,
   fetchRemoteRoom,
   forceStartEvaluation,
   getCurrentUser,
+  getIplBiddingSlab,
+  getIplNextMinBid,
   getOrCreateRoom,
   getRoom,
   joinRoom,
@@ -78,10 +94,29 @@ import {
   submitPlayerSlate,
   subscribeToMultiplayerRoom,
   unsubmitPlayerSlate,
+  togglePauseAuction,
+  updateAuctionTimer,
+  saveTournamentState,
   type PlayerScore,
   type RoomState,
 } from "@/lib/game-manager";
-import { playBidSound, playGavelWinSound } from "@/lib/sound-effects";
+import {
+  playBidSound,
+  playChaChingSound,
+  playSoldCelebrationSound,
+  playUnsoldSadHornSound,
+  playDramaticTickSound,
+  playOutbidWarningSound,
+  playMemeAirhornSound,
+  playGavelWinSound,
+} from "@/lib/sound-effects";
+import {
+  initializeIplTournament,
+  simulateMatch,
+  type TournamentState,
+  type MatchFixture,
+  type PointsTableEntry,
+} from "@/lib/cricket-tournament-simulator";
 import cinemaHero from "@/assets/cinema_hero.jpg";
 import cricketHero from "@/assets/cricket_hero.jpg";
 
@@ -203,7 +238,7 @@ export function HomeScreen() {
               </button>
               <button
                 type="button"
-                onClick={() => navigate({ to: "/join" })}
+                onClick={() => navigate({ to: "/join", search: { game: "cinema" } })}
                 className="btn btn-secondary w-full sm:w-auto px-6 py-3.5 rounded-2xl border border-border/80 bg-panel hover:bg-panel-strong font-display font-bold text-xs uppercase tracking-wider text-cream flex items-center justify-center gap-2"
               >
                 <Play size={14} fill="currentColor" /> Join Room
@@ -262,7 +297,7 @@ export function HomeScreen() {
               </button>
               <button
                 type="button"
-                onClick={() => navigate({ to: "/join" })}
+                onClick={() => navigate({ to: "/join", search: { game: "cricket" } })}
                 className="btn btn-secondary w-full sm:w-auto px-6 py-3.5 rounded-2xl border border-border/80 bg-panel hover:bg-panel-strong font-display font-bold text-xs uppercase tracking-wider text-cream flex items-center justify-center gap-2"
               >
                 <Play size={14} fill="currentColor" /> Join Room
@@ -288,7 +323,7 @@ export function HomeScreen() {
               type="text"
               value={quickCode}
               onChange={(e) => setQuickCode(e.target.value.toUpperCase())}
-              placeholder="Room Code (e.g. CINE-78)"
+              placeholder="Room Code (e.g. IPL-88 or CINE-78)"
               className="w-full sm:flex-1 px-4 py-2.5 rounded-xl bg-black/50 border border-border font-mono font-bold text-xs uppercase text-gold placeholder:text-muted-foreground"
             />
             <button
@@ -571,9 +606,17 @@ export function GameForm({
                   <input
                     type="text"
                     value={code}
-                    onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. CINE-78"
-                    maxLength={10}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setCode(val);
+                      if (val.startsWith("IPL")) {
+                        setAuctionType("CRICKET");
+                      } else if (val.startsWith("CINE")) {
+                        setAuctionType("CINEMA");
+                      }
+                    }}
+                    placeholder="e.g. IPL-88 or CINE-78"
+                    maxLength={12}
                     className="w-full px-4 py-3 rounded-xl bg-black/50 border border-border font-mono font-black text-base text-gold uppercase tracking-widest placeholder:text-muted-foreground/60 focus:border-gold outline-none transition-all"
                     required
                   />
@@ -730,14 +773,17 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
       if (!isMounted) return;
       if (remote) {
         const isUserIn = remote.players.some((p) => p.id === currentUser.id);
-        if (!isUserIn && remote.players.length < remote.settings.maxPlayers) {
-          const joined = joinRoom(code, currentUser.name);
-          setRoom(joined);
+        if (!isUserIn && remote.players.length < (remote.settings?.maxPlayers || 8)) {
+          void joinRoomAsync(code, currentUser.name).then((joined) => {
+            if (isMounted) setRoom(joined);
+          }).catch(() => {
+            if (isMounted) setRoom(remote);
+          });
         } else {
           setRoom(remote);
         }
       } else {
-        const local = getOrCreateRoom(code, currentUser.name);
+        const local = getRoom(code);
         setRoom(local);
       }
       setLoading(false);
@@ -745,6 +791,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
       setRoom(fresh);
+      setLoading(false);
       if (fresh.status === "AUCTION") {
         navigate({ to: "/game/$roomCode", params: { roomCode: code } });
       }
@@ -753,7 +800,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     return () => unsubscribe();
   }, [code, navigate, currentUser.id, currentUser.name]);
 
-  const isHost = room?.hostId === currentUser.id || room?.players[0]?.id === currentUser.id;
+  const isHost = room?.hostId === currentUser.id;
 
   const copyCode = () => {
     void navigator.clipboard.writeText(code);
@@ -764,17 +811,18 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
   const handleShufflePool = () => {
     if (!room || !isHost) return;
     const poolSize = Math.max(15, room.moviePool.length);
-    if (room.auctionType === "CRICKET") {
+    if (room.auctionType === "CRICKET" || code.startsWith("IPL")) {
       room.moviePool = getRandomizedCricketSlate(poolSize, room.settings.category || "ALL");
     } else {
       room.moviePool = getRandomizedMovieSlate(poolSize, room.settings.category || "ALL");
     }
+    bumpRoomVersion(room);
     saveRoom(room);
     setRoom({ ...room });
   };
 
   const handleStartGame = () => {
-    if (!room) return;
+    if (!room || !isHost) return;
     room.status = "AUCTION";
     room.currentMovieIndex = 0;
     const first = room.moviePool[0];
@@ -785,43 +833,115 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     room.auctionEndTime = Date.now() + room.settings.auctionSeconds * 1000;
     room.isSold = false;
     room.outPlayerIds = [];
+    bumpRoomVersion(room);
     saveRoom(room);
     navigate({ to: "/game/$roomCode", params: { roomCode: code } });
   };
 
-  if (loading || !room) {
+  if (loading && !room) {
     return (
       <Page>
-        <div className="flex-1 flex items-center justify-center py-20">
-          <LoaderCircle size={40} className="animate-spin text-gold" />
+        <div className="flex-1 flex flex-col items-center justify-center py-32 text-center gap-4">
+          <LoaderCircle size={44} className="animate-spin text-gold" />
+          <h2 className="text-xl font-black tracking-wider uppercase text-foreground">
+            Connecting to Arena {code}...
+          </h2>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            Contacting the host and synchronizing the real-time auction room. Stand by.
+          </p>
         </div>
       </Page>
     );
   }
 
-  const isCricket = room.auctionType === "CRICKET";
+  if (!room) {
+    return (
+      <Page>
+        <div className="flex-1 flex flex-col items-center justify-center py-28 text-center gap-5 max-w-md mx-auto px-4">
+          <div className="w-16 h-16 rounded-3xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 text-3xl font-black">
+            !
+          </div>
+          <h2 className="text-2xl font-black text-cream font-display">Auction Room Not Found</h2>
+          <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+            Room <span className="font-mono font-bold text-gold">{code}</span> does not exist or has expired. Make sure the host has created the auction room and verify your code.
+          </p>
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => navigate({ to: "/" })}
+              className="btn btn-secondary px-5 py-3 rounded-2xl border border-border text-xs font-bold uppercase cursor-pointer"
+            >
+              Back to Arenas
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate({ to: "/join" })}
+              className="btn btn-primary px-5 py-3 rounded-2xl bg-gold text-black text-xs font-black uppercase cursor-pointer"
+            >
+              Try Another Code
+            </button>
+          </div>
+        </div>
+      </Page>
+    );
+  }
+
+  const isCricket = room.auctionType === "CRICKET" || code.startsWith("IPL");
   const emptySlots = Math.max(0, room.settings.maxPlayers - room.players.length);
+  const [lobbyTab, setLobbyTab] = useState<"ROOM" | "ROSTER" | "RULES">("ROOM");
 
   return (
     <Page>
-      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-10 flex flex-col gap-6 w-full">
+      {/* Top Header Tabs with Popups */}
+      <AuctionTopTabs
+        moviePool={room.moviePool}
+        players={room.players}
+        currentMovieIndex={0}
+        auctionType={isCricket ? "CRICKET" : "CINEMA"}
+        roomCode={room.roomCode}
+      />
+
+      <main className="max-w-6xl mx-auto px-4 sm:px-8 py-6 sm:py-8 flex flex-col gap-6 w-full">
         {/* Lobby Header */}
-        <section className="bg-panel/90 border border-border/80 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl">
-          <div className="text-left">
+        <section className="bg-panel/90 border border-border/80 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-gold/10 via-transparent to-transparent pointer-events-none" />
+
+          <div className="text-left relative z-10">
             <GameStatus icon={<StarDot />}>
               {isCricket ? "IPL War-Room Lobby" : "Studio Cinema Lobby"}
             </GameStatus>
             <h1 className="text-3xl sm:text-4xl font-black text-cream font-display mt-2">
               {isCricket ? "🏏 IPL MEGA AUCTION LOBBY" : "🎬 FILM STUDIO LOBBY"}
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-xl">
               {isCricket
-                ? "Share room code with rival franchise owners to join."
-                : "Share room code with rival movie producers to join."}
+                ? "Franchises assemble! Inspect the full player pool, check foreign quotas, and prepare for live bidding."
+                : "Studio chiefs assemble! Inspect the cinema catalogue and formulate your bidding strategy."}
             </p>
+
+            {/* Quick Action: Open Full Catalogue */}
+            <div className="flex items-center gap-3 mt-4 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setLobbyTab((prev) => (prev === "ROSTER" ? "ROOM" : "ROSTER"))}
+                className="btn btn-secondary px-4 py-2.5 rounded-2xl border border-gold/40 text-gold hover:bg-gold/15 font-black text-xs flex items-center gap-2 shadow-md shadow-gold/5 cursor-pointer"
+              >
+                <ListFilter size={15} />
+                <span>{lobbyTab === "ROSTER" ? "Hide Player List" : `📋 Browse All ${room.moviePool.length} ${isCricket ? "Cricketers" : "Movies"}`}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLobbyTab((prev) => (prev === "RULES" ? "ROOM" : "RULES"))}
+                className="px-4 py-2.5 rounded-2xl border border-border/80 text-cream/90 hover:bg-black/40 font-bold text-xs flex items-center gap-2 cursor-pointer"
+              >
+                <BookOpen size={14} className="text-cyan-400" />
+                <span>{lobbyTab === "RULES" ? "Back to Room" : "Official Rules"}</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-col items-center sm:items-end gap-1.5">
+          <div className="flex flex-col items-center sm:items-end gap-1.5 relative z-10">
             <span className="text-xs uppercase font-bold text-muted-foreground tracking-wider">
               Room Invitation Code
             </span>
@@ -832,7 +952,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
               <button
                 type="button"
                 onClick={copyCode}
-                className="btn btn-secondary p-3 rounded-2xl border border-border/80 hover:border-gold/50 text-cream"
+                className="btn btn-secondary p-3 rounded-2xl border border-border/80 hover:border-gold/50 text-cream cursor-pointer"
                 title="Copy Room Code"
               >
                 {copied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
@@ -840,6 +960,81 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
             </div>
           </div>
         </section>
+
+        {/* EXPANDABLE FULL CATALOGUE / ROSTER TAB */}
+        {lobbyTab === "ROSTER" && (
+          <section className="bg-panel/95 border border-gold/40 rounded-3xl p-6 shadow-2xl flex flex-col gap-4 text-left animate-in fade-in duration-300">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/70 pb-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-cream font-display uppercase tracking-wider flex items-center gap-2">
+                  <ListFilter className="text-gold" size={20} />
+                  <span>Full {isCricket ? "Cricketer Auction Pool" : "Movie Slate Catalogue"} ({room.moviePool.length} Items)</span>
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Browse opening base prices, specialty roles, and stats before the live bidding war starts.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setLobbyTab("ROOM")}
+                className="px-3.5 py-1.5 rounded-xl border border-border/80 hover:border-gold/50 text-xs font-bold text-cream"
+              >
+                Close Catalogue ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 max-h-[580px] overflow-y-auto pr-1.5">
+              {room.moviePool.map((item) => (
+                <MovieCard key={item.id} movie={item} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* EXPANDABLE RULES TAB */}
+        {lobbyTab === "RULES" && (
+          <section className="bg-panel/95 border border-cyan-500/40 rounded-3xl p-6 shadow-2xl flex flex-col gap-4 text-left animate-in fade-in duration-300">
+            <div className="flex items-center justify-between border-b border-border/70 pb-3">
+              <h2 className="text-lg font-black text-cream font-display uppercase tracking-wider flex items-center gap-2">
+                <BookOpen className="text-cyan-400" size={20} />
+                <span>Official Auction Rules & IPL Tournament Guidelines</span>
+              </h2>
+              <button
+                type="button"
+                onClick={() => setLobbyTab("ROOM")}
+                className="px-3 py-1 rounded-xl border border-border/80 text-xs text-cream"
+              >
+                Close ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs sm:text-sm">
+              <div className="p-4 rounded-2xl bg-black/40 border border-gold/30 flex flex-col gap-2">
+                <strong className="text-gold font-bold uppercase text-xs">Purse & Squad Composition</strong>
+                <ul className="list-disc list-inside text-cream/90 flex flex-col gap-1.5">
+                  <li>Purse: <strong>₹{room.settings.startingBudget}.00 Cr</strong> per franchise.</li>
+                  <li>Squad Size: <strong>12 to 18 players</strong>.</li>
+                  <li>Overseas Quota: Max <strong>7 foreign players</strong> in squad.</li>
+                  <li>Playing 11 Overseas Limit: Max <strong>4 overseas players</strong> in match XI.</li>
+                  <li>Mandatory Wicketkeeper: At least 1 wicketkeeper required in match XI.</li>
+                </ul>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-black/40 border border-cyan-500/30 flex flex-col gap-2">
+                <strong className="text-cyan-400 font-bold uppercase text-xs">IPL Tournament End Result</strong>
+                <p className="text-cream/90">
+                  Matches are simulated using AI with realistic T20 scorecards, followed by the IPL Playoffs:
+                </p>
+                <ul className="list-disc list-inside text-cream/90 flex flex-col gap-1.5 mt-1">
+                  <li>League Stage: Round-robin with Points Table (PTS & NRR).</li>
+                  <li>Playoffs: Qualifier 1 (#1 vs #2), Eliminator (#3 vs #4), Qualifier 2, and Grand Final!</li>
+                  <li>Orange Cap (Runs) & Purple Cap (Wickets) awards.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Players & Chat Grid */}
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -962,6 +1157,8 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const [bidToast, setBidToast] = useState<{ id: string; text: string } | null>(null);
   const currentUser = getCurrentUser();
   const prevBidRef = useRef<number | null>(room?.currentBid ?? null);
+  const prevBidderIdRef = useRef<string | null>(room?.currentBidderId ?? null);
+  const lastSoldSoundRoundRef = useRef<number | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
 
   const showBidToast = (text: string) => {
@@ -973,19 +1170,94 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   };
 
   useEffect(() => {
-    const activeRoom = getOrCreateRoom(code);
-    if (activeRoom.status !== "AUCTION") activeRoom.status = "AUCTION";
-    if (!activeRoom.outPlayerIds) activeRoom.outPlayerIds = [];
-    if (!activeRoom.auctionEndTime && !activeRoom.isSold) {
-      activeRoom.auctionEndTime = Date.now() + (activeRoom.secondsRemaining || 30) * 1000;
+    let isMounted = true;
+
+    // Immediately fetch authoritative room state from remote database
+    void fetchRemoteRoom(code).then((remote) => {
+      if (!isMounted) return;
+      if (remote) {
+        const isUserIn = remote.players.some((p) => p.id === currentUser.id);
+        if (!isUserIn && remote.players.length < (remote.settings?.maxPlayers || 8)) {
+          void joinRoomAsync(code, currentUser.name).then((joined) => {
+            if (isMounted) {
+              setRoom(joined);
+              prevBidRef.current = joined.currentBid;
+              prevBidderIdRef.current = joined.currentBidderId;
+            }
+          }).catch(() => {
+            if (isMounted) {
+              setRoom(remote);
+              prevBidRef.current = remote.currentBid;
+              prevBidderIdRef.current = remote.currentBidderId;
+            }
+          });
+        } else {
+          setRoom(remote);
+          prevBidRef.current = remote.currentBid;
+          prevBidderIdRef.current = remote.currentBidderId;
+        }
+      }
+    });
+
+    const activeRoom = getRoom(code);
+    if (activeRoom) {
+      const isRoomHost = activeRoom.hostId === currentUser.id;
+      // ONLY the host initializes the auction timer / status
+      if (isRoomHost) {
+        if (activeRoom.status !== "AUCTION") activeRoom.status = "AUCTION";
+        if (!activeRoom.outPlayerIds) activeRoom.outPlayerIds = [];
+        if (!activeRoom.auctionEndTime && !activeRoom.isSold) {
+          activeRoom.auctionEndTime = Date.now() + (activeRoom.secondsRemaining || 30) * 1000;
+          bumpRoomVersion(activeRoom);
+          saveRoom(activeRoom);
+        }
+      } else {
+        const isUserIn = activeRoom.players.some((p) => p.id === currentUser.id);
+        if (!isUserIn && activeRoom.players.length < (activeRoom.settings?.maxPlayers || 8)) {
+          void joinRoomAsync(code, currentUser.name).then((joined) => {
+            if (isMounted) {
+              setRoom(joined);
+              prevBidRef.current = joined.currentBid;
+              prevBidderIdRef.current = joined.currentBidderId;
+            }
+          });
+          return;
+        }
+      }
+      setRoom(activeRoom);
+      prevBidRef.current = activeRoom.currentBid;
+      prevBidderIdRef.current = activeRoom.currentBidderId;
     }
-    saveRoom(activeRoom);
-    setRoom(activeRoom);
-    prevBidRef.current = activeRoom.currentBid;
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
+      // 1. Play celebration or horn when an item is concluded (once per round on all clients)
+      if (fresh.isSold && lastSoldSoundRoundRef.current !== fresh.currentMovieIndex) {
+        lastSoldSoundRoundRef.current = fresh.currentMovieIndex;
+        if (fresh.currentBidderId) {
+          playSoldCelebrationSound();
+        } else {
+          playUnsoldSadHornSound();
+        }
+      } else if (!fresh.isSold) {
+        // Reset sound tracker for new round
+        if (lastSoldSoundRoundRef.current === fresh.currentMovieIndex) {
+          lastSoldSoundRoundRef.current = null;
+        }
+      }
+
+      // 2. Bid sound and outbid alerts
       if (prevBidRef.current !== null && fresh.currentBid > prevBidRef.current && !fresh.isSold) {
-        playBidSound();
+        if (fresh.currentBid >= 10 || (prevBidRef.current && fresh.currentBid - prevBidRef.current >= 2)) {
+          playChaChingSound();
+        } else {
+          playBidSound();
+        }
+
+        // Outbid alert if previously leading
+        if (prevBidderIdRef.current === currentUser.id && fresh.currentBidderId !== currentUser.id) {
+          playOutbidWarningSound();
+        }
+
         if (fresh.currentBidderName) {
           const isMe = fresh.currentBidderId === currentUser.id;
           showBidToast(isMe ? `Your bid of ${formatCr(fresh.currentBid)} is leading!` : `${fresh.currentBidderName} bid ${formatCr(fresh.currentBid)}!`);
@@ -994,6 +1266,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
       if (!prevBidRef.current || fresh.currentBid !== prevBidRef.current) {
         prevBidRef.current = fresh.currentBid;
       }
+      prevBidderIdRef.current = fresh.currentBidderId;
       setRoom(fresh);
       if (fresh.status === "TOP_FIVE" || fresh.status === "EVALUATING" || fresh.status === "RESULTS") {
         navigate({ to: "/results/$roomCode", params: { roomCode: code } });
@@ -1001,43 +1274,103 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     });
 
     return () => {
+      isMounted = false;
       unsubscribe();
       if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
     };
   }, [code, navigate, currentUser.id]);
 
+  const handleTogglePause = () => {
+    if (!room || !isHost) return;
+    const updated = togglePauseAuction(room.roomCode);
+    if (updated) {
+      setRoom({ ...updated });
+    }
+  };
+
   const handleTimerExpired = () => {
+    // Only the host resolves the auction! Non-hosts wait for authoritative resolution.
+    if (!isHost) return;
     const latest = getRoom(code);
-    if (!latest || latest.isSold || latest.status !== "AUCTION") return;
+    if (!latest || latest.isSold || latest.status !== "AUCTION" || latest.isPaused) return;
     const resolved = resolveCurrentAuction(latest.roomCode);
     if (resolved) {
-      playGavelWinSound();
+      if (lastSoldSoundRoundRef.current !== resolved.currentMovieIndex) {
+        lastSoldSoundRoundRef.current = resolved.currentMovieIndex;
+        if (resolved.currentBidderId) {
+          playSoldCelebrationSound();
+        } else {
+          playUnsoldSadHornSound();
+        }
+      }
       setRoom({ ...resolved });
     }
   };
 
-  if (!room) return null;
-  const currentItem = room.moviePool[room.currentMovieIndex] || movies[0]!;
-  if (!currentItem) return null;
-  const me = room.players.find((p) => p.id === currentUser.id) || room.players[0];
-  if (!me) return null;
+  if (!room || !room.moviePool || room.moviePool.length === 0) {
+    return (
+      <Page>
+        <div className="flex-1 flex flex-col items-center justify-center py-32 text-center gap-4">
+          <LoaderCircle size={44} className="animate-spin text-gold" />
+          <h2 className="text-xl font-black tracking-wider uppercase text-foreground">
+            Synchronizing Authoritative Auction Slate...
+          </h2>
+          <p className="text-xs text-muted-foreground max-w-sm">
+            Connecting to host and syncing the real-time player pool. Stand by.
+          </p>
+        </div>
+      </Page>
+    );
+  }
 
-  const isHost = room.hostId === currentUser.id || room.players[0]?.id === currentUser.id;
+  const currentItem = room.moviePool[room.currentMovieIndex] || room.moviePool[0];
+  if (!currentItem) return null;
+
+  let me = room.players.find((p) => p.id === currentUser.id);
+  if (!me) {
+    me = room.players.find((p) => p.name.toLowerCase() === currentUser.name.toLowerCase());
+  }
+  if (!me) {
+    me = {
+      id: currentUser.id,
+      name: currentUser.name || "Franchise Owner",
+      budget: room.settings?.startingBudget || 100,
+      initialBudget: room.settings?.startingBudget || 100,
+      movies: [],
+      isHost: false,
+      isBot: false,
+      avatar: currentUser.avatar || "CB",
+      color: currentUser.color || "#2563eb",
+      ready: true,
+    };
+  }
+
+  const isHost = room.hostId === currentUser.id;
   const isWinning = room.currentBidderId === me.id;
   const isMeOut = room.outPlayerIds?.includes(me.id);
   const currentLeaderName = room.currentBidderName || "None yet";
   const totalRounds = Math.min(room.settings.totalMovies, room.moviePool.length);
-  const isCricket = room.auctionType === "CRICKET" || Boolean(currentItem.role);
+  const isCricket =
+    room.auctionType === "CRICKET" ||
+    code.startsWith("IPL") ||
+    currentItem.auctionType === "CRICKET" ||
+    Boolean(currentItem.role);
 
   // IPL Rule checks
   const isOverseasItem = isCricket && isOverseasPlayer(currentItem);
-  const myOverseasCount = isCricket ? me.movies.filter((m) => isOverseasPlayer(m)).length : 0;
-  const isSquadFull = isCricket && me.movies.length >= 18;
+  const myMovies = me?.movies || [];
+  const myOverseasCount = isCricket ? myMovies.filter((m) => isOverseasPlayer(m)).length : 0;
+  const isSquadFull = isCricket && myMovies.length >= 18;
   const isOverseasFull = isOverseasItem && myOverseasCount >= 7;
 
   const handleUserBid = (increment: number) => {
-    if (room.isSold || isMeOut || isSquadFull || isOverseasFull) return;
-    playBidSound();
+    if (room.isSold || room.isPaused || isMeOut || isSquadFull || isOverseasFull) return;
+    const targetBid = room.currentBid + increment;
+    if (targetBid >= 10 || increment >= 2) {
+      playChaChingSound();
+    } else {
+      playBidSound();
+    }
     const result = placeBid(room.roomCode, me.id, increment);
     if (result.success && result.room) {
       prevBidRef.current = result.room.currentBid;
@@ -1049,18 +1382,30 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   };
 
   const handleUserOutOrPass = () => {
-    if (room.isSold || isMeOut || isWinning) return;
+    if (room.isSold || room.isPaused || isMeOut || isWinning) return;
     const res = playerPassOrOut(room.roomCode, me.id);
     if (res.success && res.room) {
+      showBidToast("🔴 You passed and marked OUT for this round.");
       setRoom({ ...res.room });
-      if (res.isResolved) playGavelWinSound();
+      if (res.isResolved) {
+        if (lastSoldSoundRoundRef.current !== res.room.currentMovieIndex) {
+          lastSoldSoundRoundRef.current = res.room.currentMovieIndex;
+          if (res.room.currentBidderId) {
+            playSoldCelebrationSound();
+          } else {
+            playUnsoldSadHornSound();
+          }
+        }
+      }
     }
   };
 
   const handleNextItem = () => {
+    if (!isHost) return;
     const maxRounds = Math.min(room.settings.totalMovies, room.moviePool.length);
     if (room.currentMovieIndex + 1 >= maxRounds) {
       room.status = "TOP_FIVE";
+      bumpRoomVersion(room);
       saveRoom(room);
       navigate({ to: "/results/$roomCode", params: { roomCode: code } });
       return;
@@ -1072,70 +1417,251 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     }
   };
 
-  // State for bottom acquired bar
+  // Auto-advance directly to next player when sold/unsold without manual click
+  const [autoAdvanceSec, setAutoAdvanceSec] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!room?.isSold) {
+      setAutoAdvanceSec(null);
+      return;
+    }
+
+    setAutoAdvanceSec(3);
+    const interval = window.setInterval(() => {
+      setAutoAdvanceSec((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          window.clearInterval(interval);
+          if (isHost) {
+            handleNextItem();
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [room?.isSold, room?.currentMovieIndex, isHost]);
+
   const [activeRosterId, setActiveRosterId] = useState<string | null>(null);
-  const activeFranchiseOrProducer = room.players.find((p) => p.id === (activeRosterId || currentUser.id)) || me;
+  const [showTimerModal, setShowTimerModal] = useState(false);
+  const [manualSecondsInput, setManualSecondsInput] = useState("10");
+  const [customBidInput, setCustomBidInput] = useState("");
+
+  // Active roster selection: null defaults to currentUser, "ALL" for whole room, or specific playerId
+  const targetPlayerId = (!activeRosterId || activeRosterId === "ALL") ? currentUser.id : activeRosterId;
+  const activeFranchiseOrProducer = room.players.find((p) => p.id === targetPlayerId) || me;
+  const isViewingSelf = activeFranchiseOrProducer.id === currentUser.id;
   const displayedItems = activeFranchiseOrProducer?.movies || [];
+
+  const handleUpdateTimer = (seconds: number, isExtension = false) => {
+    if (!room || !isHost) return;
+    const updated = updateAuctionTimer(room.roomCode, seconds, isExtension);
+    if (updated) {
+      setRoom({ ...updated });
+      showBidToast(isExtension ? `Timer extended by +${seconds}s!` : `Timer updated to ${seconds}s!`);
+    }
+  };
+
+  const handleCustomBidSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = parseFloat(customBidInput.trim());
+    if (isNaN(val) || val <= 0) {
+      showBidToast("Please enter a valid bid amount in ₹ Crores.");
+      return;
+    }
+    const target = Math.round(val * 100) / 100;
+    if (target > me.budget) {
+      showBidToast(`Insufficient budget (${formatCr(me.budget)} available).`);
+      return;
+    }
+    if (target <= room.currentBid && room.currentBidderId !== null) {
+      showBidToast(`Bid must be higher than current bid of ${formatCr(room.currentBid)}.`);
+      return;
+    }
+    if (target >= 10) playChaChingSound();
+    else playBidSound();
+    const result = placeBid(room.roomCode, me.id, target, true);
+    if (result.success && result.room) {
+      prevBidRef.current = result.room.currentBid;
+      showBidToast(`Custom bid placed: ${formatCr(result.room.currentBid)}!`);
+      setRoom({ ...result.room });
+      setCustomBidInput("");
+    } else if (result.message) {
+      showBidToast(result.message);
+    }
+  };
+
+  // IPL dynamic slab calculation
+  const isOpeningBid = room.currentBidderId === null;
+  const iplSlabInfo = isCricket ? getIplNextMinBid(room.currentBid, isOpeningBid, currentItem.basePrice) : null;
+  const iplCurrentSlab = isCricket ? getIplBiddingSlab(room.currentBid) : null;
+
+  // Derive live sales/unsold history for marquee stream
+  const recentSales = useMemo(() => {
+    const list: { title: string; buyerName?: string; price?: number; isUnsold: boolean }[] = [];
+    const maxIdx = room.isSold ? room.currentMovieIndex : room.currentMovieIndex - 1;
+    for (let i = 0; i <= maxIdx; i++) {
+      const item = room.moviePool[i];
+      if (!item) continue;
+      let foundOwner: { name: string; price: number } | null = null;
+      for (const p of (room.players || [])) {
+        const owned = (p.movies || []).find((m) => m.id === item.id);
+        if (owned) {
+          foundOwner = { name: p.name, price: owned.purchasePrice || room.currentBid };
+          break;
+        }
+      }
+      if (foundOwner) {
+        list.push({ title: item.title, buyerName: foundOwner.name, price: foundOwner.price, isUnsold: false });
+      } else {
+        list.push({ title: item.title, isUnsold: true });
+      }
+    }
+    return list.reverse();
+  }, [room.moviePool, room.currentMovieIndex, room.isSold, room.players, room.currentBid]);
+
+  // Aggregate all purchases across every franchise in the room
+  const allRoomPurchases = useMemo(() => {
+    const list: { movie: OwnedMovie; buyer: Player }[] = [];
+    for (const p of (room.players || [])) {
+      for (const m of (p.movies || [])) {
+        list.push({ movie: m, buyer: p });
+      }
+    }
+    return list;
+  }, [room.players]);
+
+  const activeSpent = useMemo(() => {
+    return displayedItems.reduce((sum, m) => sum + (m.purchasePrice || m.basePrice || 0), 0);
+  }, [displayedItems]);
+
+  const activeOverseasCount = useMemo(() => {
+    return isCricket ? displayedItems.filter((m) => isOverseasPlayer(m)).length : 0;
+  }, [displayedItems, isCricket]);
+
+  // Squad role categorization for cricket mode (computed for currently inspected franchise)
+  const squadBatters = useMemo(() => displayedItems.filter((m) => m.role?.toLowerCase().includes("bat") || m.genre?.toLowerCase().includes("bat")), [displayedItems]);
+  const squadAllRounders = useMemo(() => displayedItems.filter((m) => m.role?.toLowerCase().includes("all") || m.genre?.toLowerCase().includes("all")), [displayedItems]);
+  const squadBowlers = useMemo(() => displayedItems.filter((m) => m.role?.toLowerCase().includes("bowl") || m.genre?.toLowerCase().includes("bowl")), [displayedItems]);
+  const squadWks = useMemo(() => displayedItems.filter((m) => m.role?.toLowerCase().includes("wicket") || m.role?.toLowerCase().includes("keeper") || m.genre?.toLowerCase().includes("wk")), [displayedItems]);
+
+  // Sort franchises for right rail: current user first or by remaining purse
+  const sortedFranchises = useMemo(() => {
+    return [...room.players].sort((a, b) => {
+      if (a.id === me.id) return -1;
+      if (b.id === me.id) return 1;
+      return b.budget - a.budget;
+    });
+  }, [room.players, me.id]);
 
   return (
     <Page>
-      <main className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 sm:py-6 grid grid-cols-1 lg:grid-cols-12 gap-4 xl:gap-5 items-stretch w-full">
-        {/* LEFT COLUMN: Item Card */}
-        <section className="lg:col-span-4 xl:col-span-3 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col justify-between gap-3 h-full">
-          <div className="flex flex-col gap-2.5">
-            {/* Poster: 2:3 aspect ratio for Movie, 3:4 for Cricket */}
-            <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-xl overflow-hidden relative shadow-inner bg-black flex-shrink-0`}>
-              <Poster movie={currentItem} className="w-full h-full object-cover" />
-            </div>
+      {/* Top Header Tabs with Popups */}
+      <AuctionTopTabs
+        moviePool={room.moviePool}
+        players={room.players}
+        currentMovieIndex={room.currentMovieIndex}
+        auctionType={isCricket ? "CRICKET" : "CINEMA"}
+        roomCode={room.roomCode}
+        isPaused={room.isPaused}
+        onTogglePause={isHost ? handleTogglePause : undefined}
+        onUpdateTimer={isHost ? handleUpdateTimer : undefined}
+        isHost={isHost}
+      />
 
-            <div className="flex flex-col gap-1 text-left">
-              {isCricket ? (
-                <>
-                  <div className="flex items-center gap-2 flex-wrap text-xs text-gold font-bold">
-                    <span className={`px-2 py-0.5 rounded-md border text-[10px] ${getRoleBadge(currentItem.role, currentItem.genre).colorClass}`}>
-                      {getRoleBadge(currentItem.role, currentItem.genre).label}
-                    </span>
-                    <span>•</span>
-                    <span className="text-cyan-300">
-                      {isOverseasItem ? `✈️ ${currentItem.country || "Overseas"}` : `🇮🇳 India`}
-                    </span>
+      <main className="max-w-[1500px] mx-auto px-3 sm:px-5 py-3 sm:py-4 grid grid-cols-1 lg:grid-cols-12 gap-3 xl:gap-4 items-stretch w-full">
+        {/* LEFT COLUMN: Clean Stadium Player Profile (Inspired by iplauction.fun) */}
+        <section className="lg:col-span-3 xl:col-span-3 bg-panel/95 border border-border/80 rounded-2xl p-4 shadow-2xl flex flex-col justify-between gap-2.5 h-full">
+          <div className="flex flex-col gap-2">
+            {isCricket ? (
+              <>
+                {/* Circular Portrait Headshot with Ambient Glow (NO OVERLAY BUTTONS) */}
+                <div className="w-28 h-28 sm:w-32 sm:h-32 mx-auto rounded-full overflow-hidden border-2 border-indigo-500/40 ring-4 ring-indigo-500/15 shadow-2xl relative bg-slate-950 flex items-center justify-center flex-shrink-0 mt-1">
+                  <Poster movie={currentItem} className="w-full h-full object-cover object-top rounded-full" />
+                </div>
+
+                {/* Player Name */}
+                <h2 className="text-lg sm:text-xl font-black text-cream font-display uppercase tracking-wide text-center mt-2 leading-tight">
+                  {currentItem.title}
+                </h2>
+
+                {/* Subtitle: Role & Nationality */}
+                <p className="text-xs font-semibold text-muted-foreground text-center capitalize -mt-1">
+                  {currentItem.role || currentItem.genre || "All-rounder"} • {isOverseasItem ? (currentItem.country || "OVERSEAS") : "INDIAN"}
+                </p>
+
+                {/* PLAYER RATING */}
+                <div className="rounded-xl bg-black/40 border border-border/70 p-2 text-center mt-1">
+                  <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-0.5">
+                    PLAYER RATING
+                  </span>
+                  <strong className="text-base font-black text-cream font-mono">
+                    {currentItem.imdbRating ? Math.round(currentItem.imdbRating * 10) : 85} / 100
+                  </strong>
+                </div>
+
+                {/* RECENT IPL STATS */}
+                <div className="rounded-xl bg-black/40 border border-border/70 p-2.5 text-left">
+                  <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold block text-center mb-1.5">
+                    RECENT IPL STATS
+                  </span>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">RUNS</span>
+                      <strong className="text-cream">{currentItem.stats?.runs ?? (currentItem.role?.includes("Bowler") ? 18 : 260)}</strong>
+                    </div>
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">S.R</span>
+                      <strong className="text-cyan-400">{currentItem.stats?.strikeRate ?? (currentItem.role?.includes("Bowler") ? 112 : 141)}</strong>
+                    </div>
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">H.S</span>
+                      <strong className="text-cream">{currentItem.stats?.highestScore ?? (currentItem.role?.includes("Bowler") ? "28*" : "89*")}</strong>
+                    </div>
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">WKTS</span>
+                      <strong className="text-gold">{currentItem.stats?.wickets ?? (currentItem.role?.includes("Bowler") ? 16 : 1)}</strong>
+                    </div>
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">B.AVG</span>
+                      <strong className="text-cream">{currentItem.stats?.wickets ? "22.5" : "—"}</strong>
+                    </div>
+                    <div className="flex justify-between border-b border-border/40 pb-1">
+                      <span className="text-muted-foreground text-[10px]">ECON</span>
+                      <strong className="text-cyan-400">{currentItem.stats?.economy ?? (currentItem.role?.includes("Bowler") ? "7.8" : "8.6")}</strong>
+                    </div>
                   </div>
-                  <h2 className="text-xl sm:text-2xl font-black text-cream font-display leading-tight mt-0.5">
-                    {currentItem.title}
-                  </h2>
-                  {currentItem.stats && (
-                    <div className="grid grid-cols-3 gap-1.5 mt-1 pt-2 border-t border-border/70 text-center">
-                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">Matches</span>
-                        <strong className="text-xs font-black text-cream">{currentItem.stats.matches}</strong>
-                      </div>
-                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">
-                          {currentItem.stats.wickets ? "Wickets" : "T20 Runs"}
-                        </span>
-                        <strong className="text-xs font-black text-gold">
-                          {currentItem.stats.wickets || currentItem.stats.runs || "—"}
-                        </strong>
-                      </div>
-                      <div className="p-1.5 rounded-lg bg-black/40 border border-border/60">
-                        <span className="block text-[9px] text-muted-foreground uppercase font-bold">
-                          {currentItem.stats.economy ? "Economy" : "Strike Rate"}
-                        </span>
-                        <strong className="text-xs font-black text-cyan-400">
-                          {currentItem.stats.economy || currentItem.stats.strikeRate || "—"}
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-                  {currentItem.signatureSkill && (
-                    <div className="p-1.5 rounded-lg bg-gold/10 border border-gold/30 text-[10px] font-semibold text-gold flex items-center gap-1.5 mt-1">
-                      <Zap size={12} className="text-gold flex-shrink-0" />
-                      <span>Specialty: {currentItem.signatureSkill}</span>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
+                </div>
+
+                {/* BASE PRICE */}
+                <div className="rounded-xl bg-black/40 border border-border/70 p-2 text-center">
+                  <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-0.5">
+                    BASE PRICE
+                  </span>
+                  <strong className="text-base font-black text-gold font-mono">
+                    {formatCr(currentItem.basePrice)}
+                  </strong>
+                </div>
+
+                {/* CATEGORY */}
+                <div className="rounded-xl bg-black/40 border border-border/70 p-1.5 text-center">
+                  <span className="text-[8px] uppercase tracking-widest text-muted-foreground font-bold block">
+                    CATEGORY
+                  </span>
+                  <strong className="text-xs font-black text-cream/90 uppercase tracking-wider">
+                    {currentItem.genre || "MINI AUCTION POOL"}
+                  </strong>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Cinema Mode Standard Poster */}
+                <div className="aspect-[2/3] w-full rounded-xl overflow-hidden relative shadow-inner bg-black flex-shrink-0">
+                  <Poster movie={currentItem} className="w-full h-full object-cover" />
+                </div>
+                <div className="flex flex-col gap-1 text-left">
                   <div className="flex items-center gap-2 text-xs text-gold font-bold">
                     <span>{currentItem.year}</span>
                     <span>•</span>
@@ -1157,252 +1683,802 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                       "{currentItem.tagline}"
                     </p>
                   )}
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2 border-t border-border/70 mt-auto">
-            <span className="text-xs uppercase font-bold text-muted-foreground">Opening Base Price</span>
-            <strong className="text-base font-black text-gold font-mono">{formatCr(currentItem.basePrice)}</strong>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-border/70 mt-auto">
+                  <span className="text-xs uppercase font-bold text-muted-foreground">Opening Base Price</span>
+                  <strong className="text-base font-black text-gold font-mono">{formatCr(currentItem.basePrice)}</strong>
+                </div>
+              </>
+            )}
           </div>
         </section>
 
-        {/* CENTER COLUMN: Stage, Timer, Bid, Controls */}
-        <section className="lg:col-span-8 xl:col-span-5 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-6 flex flex-col items-center text-center justify-between gap-3 shadow-xl h-full">
+        {/* CENTER COLUMN: Live Stage, Huge Bid Numeral, Bid Button & Squad View */}
+        <section className="lg:col-span-6 xl:col-span-6 bg-panel/95 border border-border/80 rounded-2xl p-4 sm:p-5 flex flex-col items-center text-center justify-between gap-3 shadow-2xl h-full">
+          {/* Top Stage Header & Round Info */}
           <div className="w-full flex items-center justify-between">
-            <GameStatus icon={<StarDot />}>
-              {isCricket ? "🏏 IPL Bidding Round" : "🎬 Cinema Bidding Round"}
-            </GameStatus>
-            <span className="text-xs font-mono font-bold text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse inline-block" />
+              <span className="text-xs font-black uppercase tracking-wider text-cream font-display">
+                {isCricket ? "🏏 IPL LIVE AUCTION" : "🎬 CINEMA AUCTION"}
+              </span>
+            </div>
+            <span className="text-xs font-mono font-bold text-muted-foreground px-2.5 py-0.5 rounded-full bg-black/40 border border-border/60">
               Round {room.currentMovieIndex + 1} of {totalRounds}
             </span>
           </div>
 
-          {/* Timer */}
-          <AuctionTimer
-            seconds={room.secondsRemaining}
-            endTime={room.auctionEndTime}
-            onTimerEnd={handleTimerExpired}
-          />
+          {/* Clock Timer */}
+          <div className="my-1">
+            <AuctionTimer
+              seconds={room.secondsRemaining}
+              endTime={room.auctionEndTime}
+              onTimerEnd={handleTimerExpired}
+              isPaused={room.isPaused}
+            />
+          </div>
 
-          {/* Current Bid Display */}
-          <div className="bid-readout my-0.5 flex flex-col items-center">
-            <small className="text-[11px] uppercase tracking-widest text-muted-foreground font-black">
-              Current Leading Bid
-            </small>
-            <strong key={room.currentBid} className="bid-price-animated text-4xl sm:text-6xl font-black text-gold font-display mt-0.5">
+          {/* Host Clock Adjustment Toolbar */}
+          {isHost && (
+            <div className="flex items-center gap-1.5 flex-wrap justify-center py-1 px-3 rounded-xl bg-black/50 border border-border/60">
+              <span className="text-[10px] text-muted-foreground font-bold uppercase flex items-center gap-1">
+                <Timer size={11} className="text-gold" /> Host Clock:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleUpdateTimer(10)}
+                className="px-2 py-0.5 rounded-lg bg-panel hover:bg-gold/20 border border-border/70 hover:border-gold text-[10px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all"
+                title="Set timer to 10 seconds"
+              >
+                10s
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateTimer(15)}
+                className="px-2 py-0.5 rounded-lg bg-panel hover:bg-gold/20 border border-border/70 hover:border-gold text-[10px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all"
+                title="Set timer to 15 seconds"
+              >
+                15s
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateTimer(30)}
+                className="px-2 py-0.5 rounded-lg bg-panel hover:bg-gold/20 border border-border/70 hover:border-gold text-[10px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all"
+                title="Set timer to 30 seconds"
+              >
+                30s
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateTimer(10, true)}
+                className="px-2 py-0.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-[10px] font-mono font-bold text-emerald-300 cursor-pointer transition-all"
+                title="Add 10 seconds to current clock"
+              >
+                +10s
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowTimerModal(true)}
+                className="px-2 py-0.5 rounded-lg bg-gold/10 hover:bg-gold/20 border border-gold/40 text-[10px] font-bold text-gold cursor-pointer transition-all flex items-center gap-1"
+                title="Set custom seconds"
+              >
+                <Edit3 size={10} /> Custom...
+              </button>
+            </div>
+          )}
+
+          {/* Strategic Time-Out Banner if Paused */}
+          {room.isPaused && (
+            <div className="w-full p-2.5 rounded-xl bg-amber-950/90 border border-amber-500 text-amber-300 font-bold text-xs flex items-center justify-between gap-2 shadow-xl animate-pulse">
+              <div className="flex items-center gap-2">
+                <Pause size={15} className="text-amber-400" />
+                <span>⏸️ STRATEGIC TIME-OUT • AUCTION PAUSED</span>
+              </div>
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={handleTogglePause}
+                  className="px-2.5 py-1 rounded-lg bg-amber-400 text-black font-black text-xs hover:brightness-110 cursor-pointer"
+                >
+                  Resume ▶
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Huge Current Bid Readout (iplauction.fun stadium style) */}
+          <div className="bid-readout my-1 flex flex-col items-center">
+            <span className="text-[11px] uppercase tracking-widest text-muted-foreground font-bold">
+              CURRENT BID
+            </span>
+            <strong key={room.currentBid} className="text-5xl sm:text-6xl xl:text-7xl font-black text-gold font-display tracking-tight my-0.5">
               {formatCr(room.currentBid)}
             </strong>
 
             {bidToast && (
               <div
                 key={bidToast.id}
-                className="bid-toast text-xs font-bold text-gold bg-gold/20 px-3.5 py-1 rounded-full border border-gold/40 mt-1 shadow-md shadow-gold/10"
+                className="bid-toast text-xs font-bold text-gold bg-gold/20 px-3.5 py-1 rounded-full border border-gold/40 my-1 shadow-md shadow-gold/10"
               >
                 {bidToast.text}
               </div>
             )}
 
-            <div className="mt-1.5">
-              <GameStatus icon={<Gavel size={14} />}>
-                {room.currentBidderId ? (
-                  <span>
-                    Leading: <b>{currentLeaderName}</b> {isWinning && "(You)"}
-                  </span>
-                ) : (
-                  <span>Awaiting opening bid</span>
-                )}
-              </GameStatus>
+            <div className="text-xs font-semibold text-muted-foreground mt-0.5 flex items-center gap-1.5">
+              {room.currentBidderId ? (
+                <span>
+                  LEADING: <strong className="text-gold font-bold">{currentLeaderName}</strong> {isWinning && "(YOU)"}
+                </span>
+              ) : (
+                <span>↑ BASE PRICE — No bids yet</span>
+              )}
             </div>
           </div>
 
-          {/* Round Sold Plaque OR Active Controls */}
+          {/* Round Concluded Plaque OR Active Bid Console */}
           {room.isSold ? (
-            <div className="sold-panel w-full max-w-md bg-gradient-to-b from-panel to-panel-strong border border-gold/50 rounded-2xl p-4 sm:p-5 shadow-2xl text-center my-auto flex flex-col items-center">
-              <span className="text-xs uppercase font-black text-gold tracking-widest block mb-1.5">
-                🔨 Gavel Down • Round Concluded
+            <div className="sold-panel w-full bg-gradient-to-b from-panel to-panel-strong border border-gold/50 rounded-2xl p-4 shadow-2xl text-center flex flex-col items-center animate-in fade-in zoom-in-95 duration-300">
+              <span className="text-xs uppercase font-black text-gold tracking-widest block mb-1">
+                🔨 GAVEL DOWN • ROUND CONCLUDED
               </span>
-              <div className="w-16 h-20 rounded-xl overflow-hidden border border-gold/40 mb-2 shadow-lg">
+              <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-gold/40 mb-1.5 shadow-lg">
                 <Poster movie={currentItem} className="w-full h-full object-cover" />
               </div>
-              <h2 className="text-xl font-black text-cream font-display">{currentItem.title}</h2>
-              <p className="text-xs mt-1 text-cream/90">
+              <h2 className="text-lg font-black text-cream font-display">{currentItem.title}</h2>
+              <p className="text-xs mt-0.5 text-cream/90">
                 {room.currentBidderId ? (
                   <>
-                    Acquired by <strong className="text-gold">{currentLeaderName}</strong> for{" "}
-                    <strong className="text-gold font-mono">{formatCr(room.currentBid)}</strong>
+                    Acquired by <strong className="text-gold font-bold">{currentLeaderName}</strong> for{" "}
+                    <strong className="text-gold font-mono font-black">{formatCr(room.currentBid)}</strong>
                   </>
                 ) : (
-                  <span className="text-muted-foreground">Passed with no bids placed.</span>
+                  <span className="text-red-400 font-bold">Passed with no bids placed (UNSOLD).</span>
                 )}
               </p>
 
-              {isHost ? (
-                <button
-                  onClick={handleNextItem}
-                  className="btn btn-primary mt-3 mx-auto px-6 py-2.5 bg-gradient-to-r from-red to-rose-600 font-bold rounded-xl flex items-center gap-2 text-xs"
-                >
-                  {room.currentMovieIndex + 1 >= totalRounds
-                    ? isCricket ? "Finalize Playing 11 & Evaluate" : "Finalize Studio Slate & Evaluate"
-                    : isCricket ? "Next Cricketer" : "Next Movie"}
-                  <ChevronRight size={16} />
-                </button>
-              ) : (
-                <div className="text-xs text-muted-foreground mt-2">
-                  Waiting for room host to proceed to round {room.currentMovieIndex + 2}...
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="w-full max-w-md flex flex-col items-center gap-2.5">
-              {/* Warnings */}
-              {isCricket && isSquadFull ? (
-                <div className="w-full p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
-                  ⛔ Squad Limit Reached (18/18 players). Full squad complete!
-                </div>
-              ) : isCricket && isOverseasFull ? (
-                <div className="w-full p-2.5 rounded-xl bg-amber-950/50 border border-amber-500/50 text-amber-300 text-xs font-bold text-center">
-                  ✈️ Overseas Limit Reached (7/7 players). Cannot bid on overseas players.
-                </div>
-              ) : isMeOut ? (
-                <div className="w-full p-2.5 rounded-xl bg-red-950/40 border border-red-500/40 text-red-300 text-xs font-bold text-center">
-                  🔴 You passed on this {isCricket ? "cricketer" : "movie"}.
-                </div>
-              ) : (
-                <>
-                  {/* Quick Increment Buttons */}
-                  <div className="grid grid-cols-3 gap-2 w-full">
-                    <button
-                      type="button"
-                      className="btn btn-secondary text-xs py-2 font-bold rounded-xl hover:border-gold/50"
-                      disabled={isWinning || me.budget < room.currentBid + 1}
-                      onClick={() => handleUserBid(1)}
-                    >
-                      +₹1 Cr
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary text-xs py-2 font-bold rounded-xl hover:border-gold/50"
-                      disabled={isWinning || me.budget < room.currentBid + 2}
-                      onClick={() => handleUserBid(2)}
-                    >
-                      +₹2 Cr
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-secondary text-xs py-2 font-bold rounded-xl hover:border-gold/50"
-                      disabled={isWinning || me.budget < room.currentBid + 5}
-                      onClick={() => handleUserBid(5)}
-                    >
-                      +₹5 Cr
-                    </button>
-                  </div>
+              {/* Automatic Direct Transition Pill */}
+              <div className="mt-2.5 px-3 py-1 rounded-full bg-black/60 border border-gold/40 text-gold text-xs font-bold flex items-center gap-2 shadow-inner">
+                <LoaderCircle size={13} className="animate-spin text-gold" />
+                <span>
+                  {autoAdvanceSec !== null && autoAdvanceSec > 0
+                    ? `Next ${isCricket ? "cricketer" : "movie"} coming directly in ${autoAdvanceSec}s...`
+                    : `Loading next ${isCricket ? "cricketer" : "movie"} directly...`}
+                </span>
+              </div>
 
-                  {/* Primary Bid Button */}
-                  <button
-                    type="button"
-                    className="btn btn-primary w-full py-3 rounded-xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-lg shadow-gold/20 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed"
-                    disabled={isWinning || me.budget < room.currentBid + 1}
-                    onClick={() => handleUserBid(1)}
-                  >
-                    {isWinning ? "Leading Highest Bid (You)" : `Raise Bid to ${formatCr(room.currentBid + 1)}`}
-                  </button>
-
-                  {/* Pass / Out Button */}
-                  <button
-                    type="button"
-                    onClick={handleUserOutOrPass}
-                    disabled={isWinning}
-                    className="w-full py-2 px-3 rounded-xl border border-red-500/40 bg-red-950/30 hover:bg-red-900/50 text-red-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <XCircle size={14} /> Pass On This {isCricket ? "Cricketer" : "Movie"}
-                  </button>
-                </>
-              )}
-
-              {/* Host Quick Pass button */}
+              {/* Host Skip / Instant Next Button */}
               {isHost && (
                 <button
                   type="button"
-                  onClick={() => {
-                    const resolved = resolveCurrentAuction(room.roomCode);
-                    if (resolved) setRoom({ ...resolved });
-                  }}
-                  className="text-[10px] text-muted-foreground hover:text-cream underline"
+                  onClick={handleNextItem}
+                  className="btn btn-primary mt-2 mx-auto px-5 py-2 bg-gradient-to-r from-red-600 to-rose-600 font-bold rounded-xl flex items-center gap-1.5 text-xs cursor-pointer shadow-lg hover:brightness-110"
                 >
-                  Host: Conclude round immediately
+                  <span>Next Now (Skip Wait) →</span>
                 </button>
+              )}
+            </div>
+          ) : (
+            <div className="w-full flex flex-col items-center gap-2">
+              {/* Bidding Controls / Warnings */}
+              {isCricket && isSquadFull ? (
+                <div className="w-full p-3 rounded-2xl bg-amber-950/60 border border-amber-500/60 text-amber-300 text-xs font-bold text-center flex flex-col items-center gap-1 shadow-md">
+                  <span className="font-black text-sm text-gold">⛔ SQUAD LIMIT REACHED (18/18 PLAYERS)</span>
+                  <span className="text-[11px] text-amber-200/80">Your franchise roster is 100% full. You cannot bid on any more cricketers.</span>
+                </div>
+              ) : isCricket && isOverseasFull ? (
+                <div className="w-full p-3 rounded-2xl bg-amber-950/60 border border-amber-500/60 text-amber-300 text-xs font-bold text-center flex flex-col items-center gap-1 shadow-md">
+                  <span className="font-black text-sm text-cyan-400">✈️ OVERSEAS QUOTA FULL (7/7 PLAYERS)</span>
+                  <span className="text-[11px] text-amber-200/80">You have reached the maximum allowed overseas players (7/7).</span>
+                </div>
+              ) : isMeOut ? (
+                <div className="w-full p-2.5 rounded-xl bg-red-950/50 border border-red-500/50 text-red-300 text-xs font-bold text-center">
+                  🔴 You called OUT / Passed for this {isCricket ? "cricketer" : "movie"}.
+                </div>
+              ) : (
+                <>
+                  {/* Primary High-Impact BID Action with Purse Left Badge (iplauction.fun style) */}
+                  {(() => {
+                    const nextTargetBid = isCricket
+                      ? (iplSlabInfo?.nextBid ?? (room.currentBid + 0.20))
+                      : room.currentBid + 1;
+                    const canAfford = me.budget >= nextTargetBid;
+                    const disabled = room.isPaused || isWinning || !canAfford;
+
+                    return (
+                      <div className="w-full flex items-stretch gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isCricket) {
+                              if (isOpeningBid) {
+                                handleUserBid(currentItem.basePrice);
+                              } else if (iplSlabInfo) {
+                                const inc = Math.round((iplSlabInfo.nextBid - room.currentBid) * 100) / 100;
+                                handleUserBid(inc);
+                              }
+                            } else {
+                              handleUserBid(1);
+                            }
+                          }}
+                          disabled={disabled}
+                          className="flex-1 py-3.5 sm:py-4 px-5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-500 hover:from-red-500 hover:to-rose-500 text-white font-black text-lg sm:text-xl uppercase tracking-wider shadow-xl shadow-red-950/40 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center gap-2.5 border border-red-400/40"
+                        >
+                          <Gavel size={20} />
+                          <span>
+                            {room.isPaused
+                              ? "Clock Paused"
+                              : isWinning
+                                ? "Leading Bid (You)"
+                                : isOpeningBid
+                                  ? `BID ${formatCr(currentItem.basePrice)}`
+                                  : `BID ${formatCr(nextTargetBid)}`}
+                          </span>
+                        </button>
+
+                        {/* PURSE LEFT Pill */}
+                        <div className="px-4 py-2 rounded-2xl bg-black/60 border border-border/80 flex flex-col items-center justify-center min-w-[110px] flex-shrink-0">
+                          <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">
+                            PURSE LEFT
+                          </span>
+                          <strong className="text-sm font-black text-gold font-mono">
+                            {formatCr(me.budget)}
+                          </strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Tactical Jump Buttons & Custom Bid Input */}
+                  {isCricket ? (
+                    <div className="w-full flex flex-col gap-1.5">
+                      <div className="grid grid-cols-4 gap-1.5 w-full">
+                        {(() => {
+                          const baseInc = iplCurrentSlab?.increment || 0.20;
+                          const jump1Inc = Math.round(baseInc * 100) / 100;
+                          const jump2Inc = Math.round(baseInc * 2 * 100) / 100;
+                          const jump3Inc = 1.00;
+                          const jump4Inc = 2.00;
+
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                disabled={room.isPaused || isWinning || me.budget < room.currentBid + jump1Inc}
+                                onClick={() => handleUserBid(jump1Inc)}
+                                className="py-1.5 px-1 rounded-xl bg-panel border border-border/80 hover:border-gold/60 text-[11px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed text-center"
+                                title={`Slab increment (+₹${(jump1Inc * 100).toFixed(0)} Lakh)`}
+                              >
+                                +₹{(jump1Inc * 100).toFixed(0)}L
+                              </button>
+                              <button
+                                type="button"
+                                disabled={room.isPaused || isWinning || me.budget < room.currentBid + jump2Inc}
+                                onClick={() => handleUserBid(jump2Inc)}
+                                className="py-1.5 px-1 rounded-xl bg-panel border border-border/80 hover:border-gold/60 text-[11px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed text-center"
+                                title={`Double slab (+₹${(jump2Inc * 100).toFixed(0)} Lakh)`}
+                              >
+                                +₹{(jump2Inc * 100).toFixed(0)}L
+                              </button>
+                              <button
+                                type="button"
+                                disabled={room.isPaused || isWinning || me.budget < room.currentBid + jump3Inc}
+                                onClick={() => handleUserBid(jump3Inc)}
+                                className="py-1.5 px-1 rounded-xl bg-panel border border-border/80 hover:border-gold/60 text-[11px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed text-center"
+                                title="War Jump +₹1.00 Cr"
+                              >
+                                +₹1.0 Cr
+                              </button>
+                              <button
+                                type="button"
+                                disabled={room.isPaused || isWinning || me.budget < room.currentBid + jump4Inc}
+                                onClick={() => handleUserBid(jump4Inc)}
+                                className="py-1.5 px-1 rounded-xl bg-panel border border-border/80 hover:border-gold/60 text-[11px] font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed text-center"
+                                title="Mega Jump +₹2.00 Cr"
+                              >
+                                +₹2.0 Cr
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Custom Bid Input Form */}
+                      <form onSubmit={handleCustomBidSubmit} className="flex items-center gap-1.5 w-full">
+                        <input
+                          type="number"
+                          step="0.05"
+                          min={room.currentBid ? (room.currentBid + 0.1).toFixed(2) : currentItem.basePrice.toFixed(2)}
+                          max={me.budget}
+                          value={customBidInput}
+                          onChange={(e) => setCustomBidInput(e.target.value)}
+                          placeholder={`Custom bid in ₹ Cr (Min: ${formatCr(iplSlabInfo?.nextBid || currentItem.basePrice)})`}
+                          disabled={room.isPaused || isWinning}
+                          className="flex-1 bg-black/60 border border-border/70 focus:border-gold rounded-xl px-3 py-1.5 text-xs font-mono text-cream placeholder:text-muted-foreground/60 outline-none disabled:opacity-30"
+                        />
+                        <button
+                          type="submit"
+                          disabled={room.isPaused || isWinning || !customBidInput.trim()}
+                          className="px-3 py-1.5 rounded-xl bg-gold/20 hover:bg-gold border border-gold/50 text-gold hover:text-black font-bold text-xs font-display uppercase tracking-wider transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex-shrink-0"
+                        >
+                          Bid
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    /* Cinema Mode Standard Quick Increments */
+                    <div className="grid grid-cols-3 gap-1.5 w-full">
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs py-1.5 font-bold rounded-xl cursor-pointer"
+                        disabled={room.isPaused || isWinning || me.budget < room.currentBid + 1}
+                        onClick={() => handleUserBid(1)}
+                      >
+                        +₹1 Cr
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs py-1.5 font-bold rounded-xl cursor-pointer"
+                        disabled={room.isPaused || isWinning || me.budget < room.currentBid + 2}
+                        onClick={() => handleUserBid(2)}
+                      >
+                        +₹2 Cr
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary text-xs py-1.5 font-bold rounded-xl cursor-pointer"
+                        disabled={room.isPaused || isWinning || me.budget < room.currentBid + 5}
+                        onClick={() => handleUserBid(5)}
+                      >
+                        +₹5 Cr
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Pass / Out Button */}
+                  {!isWinning && !isMeOut && (
+                    <button
+                      type="button"
+                      onClick={handleUserOutOrPass}
+                      disabled={room.isPaused}
+                      className="w-full py-2 px-3 rounded-xl border border-red-500/30 bg-red-950/30 hover:bg-red-900/50 text-red-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <XCircle size={14} /> Pass & Mark OUT For This {isCricket ? "Cricketer" : "Movie"}
+                    </button>
+                  )}
+                </>
+              )}
+
+              {/* Live Bidder Status Alert (IN / OUT indicator) - ALWAYS VISIBLE */}
+              <div className="w-full flex items-center justify-between px-3 py-1.5 rounded-xl bg-black/50 border border-border/70 text-xs">
+                <div className="flex items-center gap-1.5">
+                  {isMeOut ? (
+                    <span className="px-2 py-0.5 rounded-full bg-red-950/80 text-red-300 border border-red-500/40 text-[10px] font-black uppercase flex items-center gap-1">
+                      🔴 YOU ARE OUT (Passed)
+                    </span>
+                  ) : isCricket && isSquadFull ? (
+                    <span className="px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-500/40 text-[10px] font-black uppercase flex items-center gap-1">
+                      ⛔ SQUAD FULL (18/18)
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase flex items-center gap-1">
+                      🟢 YOU ARE IN (Active Bidder)
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] font-mono text-muted-foreground font-bold">
+                  {room.players.filter((p) => !room.outPlayerIds?.includes(p.id)).length} / {room.players.length} Active Teams
+                </span>
+              </div>
+
+              {/* HOST CONTROLS - ALWAYS VISIBLE FOR HOST EVEN IF HOST SQUAD IS FULL (18/18) OR HOST PASSED */}
+              {isHost && (
+                <div className="w-full flex flex-col gap-2 pt-1 border-t border-border/60">
+                  <div className="flex items-center gap-2 w-full">
+                    <button
+                      type="button"
+                      onClick={handleTogglePause}
+                      className="flex-1 py-2 px-3 rounded-xl border border-amber-500/40 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      title="Strategic Time-Out"
+                    >
+                      {room.isPaused ? <Play size={13} /> : <Pause size={13} />}
+                      <span>{room.isPaused ? "Resume Auction" : "Strategic Time-Out (Pause)"}</span>
+                    </button>
+                  </div>
+
+                  {/* Host Conclude Round Immediately (Hammer Down) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const resolved = resolveCurrentAuction(room.roomCode);
+                      if (resolved) {
+                        if (lastSoldSoundRoundRef.current !== resolved.currentMovieIndex) {
+                          lastSoldSoundRoundRef.current = resolved.currentMovieIndex;
+                          if (resolved.currentBidderId) {
+                            playSoldCelebrationSound();
+                          } else {
+                            playUnsoldSadHornSound();
+                          }
+                        }
+                        setRoom({ ...resolved });
+                      }
+                    }}
+                    className="w-full py-2.5 px-3 rounded-xl border border-gold/50 bg-gradient-to-r from-gold/20 via-amber-500/20 to-gold/20 hover:bg-gold/30 text-gold font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-md hover:border-gold hover:shadow-gold/10"
+                    title="End this round immediately and declare the winner or unsold"
+                  >
+                    <Gavel size={14} />
+                    <span>Host: Conclude Round Immediately (Hammer Down)</span>
+                  </button>
+                </div>
               )}
             </div>
           )}
 
-          {/* Quota Progress Bar */}
-          <div className="mt-1 flex items-center gap-2.5 text-xs text-muted-foreground bg-black/40 px-4 py-1.5 rounded-full border border-border/60 flex-wrap justify-center">
-            {isCricket ? (
-              <>
-                <Award size={13} className="text-gold" />
-                <span>Squad:</span>
-                <strong className={me.movies.length >= 12 ? "text-emerald-400" : "text-amber-300"}>
-                  {me.movies.length} / 18 Players (Min 12)
-                </strong>
-                <span>•</span>
-                <span className={myOverseasCount >= 7 ? "text-amber-400 font-bold" : "text-cyan-300 font-semibold"}>
-                  ✈️ {myOverseasCount} / 7 OS (Max 4 in 11)
-                </span>
-              </>
-            ) : (
-              <>
-                <Film size={13} className="text-gold" />
-                <span>Your Studio Slate:</span>
-                <strong className={me.movies.length >= 5 ? "text-emerald-400" : "text-amber-300"}>
-                  {me.movies.length} / 5 Films Acquired
-                </strong>
-                {me.movies.length < 5 && (
-                  <span className="text-[10px] text-muted-foreground">({5 - me.movies.length} more needed)</span>
+          {/* SQUAD CONTAINER (Centralized as shown in iplauction.fun screenshot, interactive franchise inspection) */}
+          <div className="w-full bg-black/50 border border-border/70 rounded-2xl p-3 sm:p-3.5 text-left mt-1">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-base sm:text-lg flex-shrink-0">{activeFranchiseOrProducer.avatar}</span>
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <h3 className="text-xs sm:text-sm font-black text-cream uppercase tracking-wide font-display">
+                      {isViewingSelf
+                        ? isCricket ? "MY ACQUIRED SQUAD" : "MY STUDIO SLATE"
+                        : isCricket ? `${activeFranchiseOrProducer.name.toUpperCase()} SQUAD` : `${activeFranchiseOrProducer.name.toUpperCase()} SLATE`}
+                    </h3>
+                    {isViewingSelf ? (
+                      <span className="text-[9px] font-bold text-gold px-1.5 py-0.2 rounded bg-gold/15 border border-gold/30">
+                        YOU
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-bold text-cyan-300 px-1.5 py-0.2 rounded bg-cyan-950/80 border border-cyan-500/40 flex items-center gap-1">
+                        👁️ INSPECTING
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground flex items-center gap-2">
+                    <span>
+                      {isViewingSelf
+                        ? "Your acquisitions stay visible here. Click any franchise to inspect their buys."
+                        : `Inspecting ${activeFranchiseOrProducer.name}'s squad. Click below or right rail to change.`}
+                    </span>
+                    {!isViewingSelf && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveRosterId(currentUser.id)}
+                        className="text-[10px] font-bold text-gold hover:underline cursor-pointer flex-shrink-0"
+                      >
+                        ← Back to My Squad
+                      </button>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Squad Quotas */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="px-2 py-0.5 rounded-lg bg-black/60 border border-border/60 text-center">
+                  <span className="block text-[8px] uppercase tracking-wider text-muted-foreground font-bold">PLAYERS</span>
+                  <strong className="text-xs font-black text-cream font-mono">
+                    {displayedItems.length}/{isCricket ? "18" : "5"}
+                  </strong>
+                </div>
+                {isCricket && (
+                  <div className="px-2 py-0.5 rounded-lg bg-black/60 border border-border/60 text-center">
+                    <span className="block text-[8px] uppercase tracking-wider text-muted-foreground font-bold">OVERSEAS</span>
+                    <strong className="text-xs font-black text-cyan-300 font-mono">{activeOverseasCount}/7</strong>
+                  </div>
                 )}
-              </>
+                <div className="px-2 py-0.5 rounded-lg bg-black/60 border border-border/60 text-center">
+                  <span className="block text-[8px] uppercase tracking-wider text-muted-foreground font-bold">SPENT</span>
+                  <strong className="text-xs font-black text-gold font-mono">{formatCr(activeSpent)}</strong>
+                </div>
+                <div className="px-2 py-0.5 rounded-lg bg-black/60 border border-border/60 text-center">
+                  <span className="block text-[8px] uppercase tracking-wider text-muted-foreground font-bold">PURSE LEFT</span>
+                  <strong className="text-xs font-black text-emerald-400 font-mono">{formatCr(activeFranchiseOrProducer.budget)}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Franchise Switcher Tabs inside Central Squad Container */}
+            {room.players.length > 1 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 border-b border-border/40 scrollbar-none">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex-shrink-0 flex items-center gap-1">
+                  <Users size={11} className="text-gold" /> Switch Roster:
+                </span>
+                {room.players.map((p) => {
+                  const isSelected = p.id === activeFranchiseOrProducer.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setActiveRosterId(p.id)}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 flex-shrink-0 cursor-pointer ${
+                        isSelected
+                          ? "bg-gold text-black shadow-md shadow-gold/20 font-black"
+                          : "bg-black/40 text-cream/80 hover:bg-black/70 border border-border/60 hover:border-gold/40"
+                      }`}
+                      title={`Inspect ${p.name}'s purchases`}
+                    >
+                      <span>{p.avatar}</span>
+                      <span className="truncate max-w-[85px]">{p.id === currentUser.id ? "Me" : p.name}</span>
+                      <span className="px-1 py-0.2 rounded-full bg-black/40 text-[9px] font-mono">
+                        {(p.movies || []).length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Role Breakdown Roster / Acquired List */}
+            {displayedItems.length === 0 ? (
+              <div className="py-4 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-1">
+                <span>
+                  {isViewingSelf
+                    ? `No ${isCricket ? "cricketers" : "movies"} acquired yet. Win live bidding rounds to build your ${isCricket ? "franchise" : "studio"}!`
+                    : `${activeFranchiseOrProducer.name} has not acquired any ${isCricket ? "cricketers" : "movies"} yet.`}
+                </span>
+              </div>
+            ) : isCricket ? (
+              <div className="flex flex-col gap-2 pt-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                {squadBatters.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-cyan-400 tracking-wider flex items-center gap-1 mb-1">
+                      🏏 BATTER ({squadBatters.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {squadBatters.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-border/50 text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 border border-cyan-400/40">
+                              <Poster movie={item} className="w-full h-full object-cover" />
+                            </span>
+                            <span className="font-bold text-cream truncate">{item.title}</span>
+                            {isOverseasPlayer(item) && <span className="text-[10px]" title="Overseas">✈️</span>}
+                          </div>
+                          <span className="font-mono font-bold text-gold flex-shrink-0 ml-1">
+                            {formatCr(item.purchasePrice || item.basePrice)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {squadAllRounders.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider flex items-center gap-1 mb-1">
+                      ⚡ ALL-ROUNDER ({squadAllRounders.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {squadAllRounders.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-border/50 text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 border border-amber-400/40">
+                              <Poster movie={item} className="w-full h-full object-cover" />
+                            </span>
+                            <span className="font-bold text-cream truncate">{item.title}</span>
+                            {isOverseasPlayer(item) && <span className="text-[10px]" title="Overseas">✈️</span>}
+                          </div>
+                          <span className="font-mono font-bold text-gold flex-shrink-0 ml-1">
+                            {formatCr(item.purchasePrice || item.basePrice)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {squadBowlers.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-rose-400 tracking-wider flex items-center gap-1 mb-1">
+                      🎯 BOWLER ({squadBowlers.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {squadBowlers.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-border/50 text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 border border-rose-400/40">
+                              <Poster movie={item} className="w-full h-full object-cover" />
+                            </span>
+                            <span className="font-bold text-cream truncate">{item.title}</span>
+                            {isOverseasPlayer(item) && <span className="text-[10px]" title="Overseas">✈️</span>}
+                          </div>
+                          <span className="font-mono font-bold text-gold flex-shrink-0 ml-1">
+                            {formatCr(item.purchasePrice || item.basePrice)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {squadWks.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-purple-400 tracking-wider flex items-center gap-1 mb-1">
+                      🧤 WICKET-KEEPER ({squadWks.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {squadWks.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between p-1.5 rounded-xl bg-black/40 border border-border/50 text-xs">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="w-5 h-5 rounded-full overflow-hidden flex-shrink-0 border border-purple-400/40">
+                              <Poster movie={item} className="w-full h-full object-cover" />
+                            </span>
+                            <span className="font-bold text-cream truncate">{item.title}</span>
+                            {isOverseasPlayer(item) && <span className="text-[10px]" title="Overseas">✈️</span>}
+                          </div>
+                          <span className="font-mono font-bold text-gold flex-shrink-0 ml-1">
+                            {formatCr(item.purchasePrice || item.basePrice)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Cinema Mode Movie Slate List */
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                {displayedItems.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between p-2 rounded-xl bg-black/40 border border-border/50 text-xs">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="w-6 h-8 rounded overflow-hidden flex-shrink-0 border border-gold/40">
+                        <Poster movie={item} className="w-full h-full object-cover" />
+                      </span>
+                      <div className="flex flex-col truncate">
+                        <span className="font-bold text-cream truncate">{item.title}</span>
+                        <span className="text-[10px] text-muted-foreground">★ {item.imdbRating} • {item.genre}</span>
+                      </div>
+                    </div>
+                    <span className="font-mono font-bold text-gold flex-shrink-0 ml-2">
+                      {formatCr(item.purchasePrice || item.basePrice)}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </section>
 
-        {/* RIGHT COLUMN: Standings & Live War-Room Chat */}
-        <aside className="lg:col-span-12 xl:col-span-4 flex flex-col gap-3 min-h-0">
-          <div className="bg-panel/90 border border-border/80 rounded-2xl p-4 shadow-xl flex flex-col gap-2 flex-shrink-0">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs uppercase tracking-wider text-muted-foreground font-black">
-                {isCricket ? "Franchise Bidders Status" : "Studio Producers Status"}
-              </h3>
-              <span className="text-[10px] text-muted-foreground">Live Room</span>
+        {/* RIGHT COLUMN: Franchises Purse Leaderboard & Live Chat */}
+        <aside className="lg:col-span-3 xl:col-span-3 flex flex-col gap-3 min-h-0">
+          {/* Franchises Status Rail (iplauction.fun style with click-to-inspect) */}
+          <div className="bg-panel/95 border border-border/80 rounded-2xl p-3.5 shadow-2xl flex flex-col gap-2 flex-shrink-0">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-black flex items-center gap-1">
+                <Users size={12} className="text-gold" />
+                {isCricket ? "FRANCHISES" : "STUDIO PRODUCERS"}
+              </span>
+              <span className="text-[10px] font-mono font-bold text-muted-foreground">
+                {room.players.length} TEAMS • CLICK TO VIEW
+              </span>
             </div>
 
-            <div className="flex flex-col gap-1.5 max-h-[180px] overflow-y-auto pr-1">
-              {room.players.map((p) => {
+            <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto pr-1 custom-scrollbar">
+              {sortedFranchises.map((p) => {
+                const isMe = p.id === currentUser.id;
                 const isLeading = p.id === room.currentBidderId;
                 const isOut = room.outPlayerIds?.includes(p.id);
+                const isInspected = p.id === activeFranchiseOrProducer.id;
+
                 return (
-                  <PlayerCard
+                  <div
                     key={p.id}
-                    player={p}
-                    current={p.id === currentUser.id}
-                    isLeading={isLeading}
-                    isOut={isOut}
-                    isCricket={isCricket}
-                  />
+                    onClick={() => setActiveRosterId(p.id)}
+                    className={`flex items-center justify-between px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer select-none ${
+                      isInspected
+                        ? "bg-gold/15 border-gold ring-2 ring-gold/40 shadow-md shadow-gold/10"
+                        : isMe
+                          ? "bg-amber-950/40 border-gold/70 text-gold hover:border-gold"
+                          : isLeading
+                            ? "bg-gold/10 border-gold/60 text-cream hover:border-gold"
+                            : isOut
+                              ? "bg-black/30 border-red-900/40 opacity-60 text-muted-foreground hover:opacity-90"
+                              : "bg-black/40 border-border/60 text-cream/90 hover:border-gold/50"
+                    }`}
+                    title={`Click to inspect ${p.name}'s purchases and squad`}
+                  >
+                    <div className="flex items-center gap-2 truncate min-w-0">
+                      <span className="text-sm flex-shrink-0">{p.avatar}</span>
+                      <span className="text-xs font-bold truncate">
+                        {p.name} {isMe && <span className="text-[10px] text-gold font-mono uppercase">(YOU)</span>}
+                      </span>
+                      {isInspected && (
+                        <span className="text-[9px] font-bold text-cyan-300 font-mono px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-500/30 flex-shrink-0">
+                          VIEWING
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {isOut ? (
+                        <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-red-950/80 text-red-400 border border-red-500/40 flex-shrink-0">
+                          🔴 OUT
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 flex-shrink-0">
+                          🟢 IN
+                        </span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {(p.movies || []).length} pl
+                      </span>
+                      <strong className="text-xs font-black text-gold font-mono">
+                        {formatCr(p.budget)}
+                      </strong>
+                    </div>
+                  </div>
                 );
               })}
             </div>
           </div>
 
+          {/* Live War Room Chat */}
           <RoomChat
             roomCode={room.roomCode}
             playerName={currentUser.name}
-            className="h-[430px] lg:h-[450px] max-h-[450px]"
+            className="h-[380px] lg:h-[400px] max-h-[420px]"
           />
         </aside>
 
-        {/* BOTTOM SECTION: AUCTION BAR & REAL-TIME ACQUIRED TRAY */}
-        <section className="lg:col-span-12 bg-panel/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col gap-3 mt-1">
+        {/* BOTTOM SECTION: Live Sales Marquee Ticker (iplauction.fun stadium style) */}
+        <section className="lg:col-span-12 bg-black/90 border border-border/80 rounded-2xl p-2.5 shadow-xl flex items-center gap-3 overflow-hidden mt-1 relative">
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gold text-black font-black text-xs uppercase tracking-wider flex-shrink-0 shadow-md">
+            <Sparkles size={13} fill="black" />
+            <span>SALES</span>
+          </div>
+
+          <div className="flex-1 overflow-hidden relative">
+            <div className="animate-marquee-smooth flex items-center gap-6 whitespace-nowrap">
+              {recentSales.length === 0 ? (
+                <span className="text-xs text-muted-foreground italic">
+                  Live auction in progress... Concluded sales and unsold results will scroll here live.
+                </span>
+              ) : (
+                <>
+                  {recentSales.map((sale, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs font-medium">
+                      <span className="text-cream font-bold">{sale.title}</span>
+                      {sale.isUnsold ? (
+                        <span className="text-red-400 font-bold font-mono px-1.5 py-0.2 rounded bg-red-950/60 border border-red-500/30 text-[10px]">
+                          UNSOLD
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400 font-bold flex items-center gap-1">
+                          → <span className="text-cream">{sale.buyerName}</span>
+                          <span className="font-mono text-gold font-black">{formatCr(sale.price || 0)}</span>
+                        </span>
+                      )}
+                      <span className="text-border mx-1">•</span>
+                    </div>
+                  ))}
+
+                  {/* Duplicate set for seamless infinite loop */}
+                  {recentSales.map((sale, i) => (
+                    <div key={`dup_${i}`} className="flex items-center gap-2 text-xs font-medium">
+                      <span className="text-cream font-bold">{sale.title}</span>
+                      {sale.isUnsold ? (
+                        <span className="text-red-400 font-bold font-mono px-1.5 py-0.2 rounded bg-red-950/60 border border-red-500/30 text-[10px]">
+                          UNSOLD
+                        </span>
+                      ) : (
+                        <span className="text-emerald-400 font-bold flex items-center gap-1">
+                          → <span className="text-cream">{sale.buyerName}</span>
+                          <span className="font-mono text-gold font-black">{formatCr(sale.price || 0)}</span>
+                        </span>
+                      )}
+                      <span className="text-border mx-1">•</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* BOTTOM SECTION: REAL-TIME ACQUIRED SQUADS & PURCHASES EXPLORER TRAY */}
+        <section className="lg:col-span-12 bg-panel/95 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-2xl flex flex-col gap-3 mt-1">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="p-2 rounded-xl bg-gold/15 text-gold border border-gold/30">
@@ -1410,56 +2486,137 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
               </span>
               <div className="flex flex-col text-left">
                 <h3 className="text-sm font-black text-cream uppercase tracking-wider font-display flex items-center gap-2">
-                  {activeFranchiseOrProducer?.id === currentUser.id
-                    ? isCricket ? "My Acquired Squad" : "My Studio Slate"
-                    : isCricket ? `${activeFranchiseOrProducer?.name}'s Squad` : `${activeFranchiseOrProducer?.name}'s Slate`}
+                  {activeRosterId === "ALL"
+                    ? "ALL COMPLETED ROOM PURCHASES"
+                    : isViewingSelf
+                      ? isCricket ? "MY ACQUIRED SQUAD" : "MY STUDIO SLATE"
+                      : isCricket ? `${activeFranchiseOrProducer.name.toUpperCase()}'S SQUAD` : `${activeFranchiseOrProducer.name.toUpperCase()}'S SLATE`}
                   <span className="text-xs font-mono font-bold text-gold">
-                    ({displayedItems.length} {isCricket ? "/ 18 Players" : "/ 5 Films"})
+                    ({activeRosterId === "ALL" ? allRoomPurchases.length : displayedItems.length} {isCricket ? "Players" : "Films"})
                   </span>
                 </h3>
                 <span className="text-[11px] text-muted-foreground">
-                  Purse Available: <strong className="text-gold font-mono">{formatCr(activeFranchiseOrProducer?.budget || 0)}</strong>
-                  {isCricket && ` • ✈️ ${displayedItems.filter((m) => isOverseasPlayer(m)).length}/7 Overseas`}
+                  {activeRosterId === "ALL" ? (
+                    <>Live feed of all acquisitions made by all {room.players.length} franchises</>
+                  ) : (
+                    <>
+                      Purse Available: <strong className="text-gold font-mono">{formatCr(activeFranchiseOrProducer.budget)}</strong>
+                      {isCricket && ` • ✈️ ${activeOverseasCount}/7 Overseas`}
+                      {` • Total Spent: `}<strong className="text-cream font-mono">{formatCr(activeSpent)}</strong>
+                    </>
+                  )}
                 </span>
               </div>
             </div>
 
-            {/* Switcher Tabs */}
-            {room.players.length > 1 && (
-              <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1">
-                {room.players.map((p) => {
-                  const isSelected = p.id === (activeRosterId || currentUser.id);
+            {/* Franchise Switcher Tabs */}
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full pb-1 scrollbar-none">
+              <button
+                type="button"
+                onClick={() => setActiveRosterId("ALL")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                  activeRosterId === "ALL"
+                    ? "bg-cyan-400 text-black shadow-md shadow-cyan-400/20 font-black"
+                    : "bg-black/40 text-cream/80 hover:bg-black/70 border border-border/60 hover:border-cyan-400/50"
+                }`}
+              >
+                <Sparkles size={12} />
+                <span>All Buys</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono">
+                  {allRoomPurchases.length}
+                </span>
+              </button>
+
+              {room.players.map((p) => {
+                const isSelected = activeRosterId !== "ALL" && p.id === activeFranchiseOrProducer.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setActiveRosterId(p.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                      isSelected
+                        ? "bg-gold text-black shadow-md shadow-gold/20 font-black"
+                        : "bg-black/40 text-cream/80 hover:bg-black/70 border border-border/60 hover:border-gold/40"
+                    }`}
+                  >
+                    <span>{p.avatar}</span>
+                    <span className="truncate max-w-[100px]">{p.id === currentUser.id ? "Me" : p.name}</span>
+                    <span className="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] font-mono">
+                      {(p.movies || []).length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Cards Grid: Selected Franchise OR All Room Purchases */}
+          {activeRosterId === "ALL" ? (
+            allRoomPurchases.length === 0 ? (
+              <div className="p-8 rounded-xl bg-black/20 border border-dashed border-border/60 text-center flex flex-col items-center justify-center gap-2">
+                {isCricket ? <Award size={28} className="text-muted-foreground/40" /> : <Film size={28} className="text-muted-foreground/40" />}
+                <p className="text-xs text-muted-foreground">
+                  No purchases made yet in this room. All player acquisitions will appear here in real time.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 pt-1">
+                {allRoomPurchases.map(({ movie: item, buyer }, idx) => {
+                  const role = getRoleBadge(item.role, item.genre);
+                  const isOverseas = isCricket && isOverseasPlayer(item);
                   return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setActiveRosterId(p.id)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 ${
-                        isSelected
-                          ? "bg-gold text-black shadow-md shadow-gold/20 font-black"
-                          : "bg-black/40 text-cream/80 hover:bg-black/70 border border-border/60"
-                      }`}
+                    <div
+                      key={`${item.id}_all_${idx}`}
+                      className="group bg-black/50 border border-border/70 hover:border-gold/50 rounded-xl p-2.5 flex flex-col gap-2 transition-all shadow-md text-left"
                     >
-                      <span>{p.avatar}</span>
-                      <span className="truncate max-w-[110px]">{p.id === currentUser.id ? "Me" : p.name}</span>
-                      <span className="px-1.5 py-0.5 rounded-full bg-black/30 text-[10px] font-mono">
-                        {p.movies.length}
-                      </span>
-                    </button>
+                      <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-lg overflow-hidden relative shadow-inner bg-black`}>
+                        <Poster movie={item} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                        <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 backdrop-blur-sm text-[9px] font-mono font-bold text-gold border border-gold/30">
+                          {formatCr(item.purchasePrice || item.basePrice)}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col text-left">
+                        <strong className="text-xs font-bold text-cream truncate" title={item.title}>
+                          {item.title}
+                        </strong>
+
+                        <div className="flex items-center justify-between gap-1 mt-1">
+                          <span className="text-[10px] font-bold text-cyan-300 truncate flex items-center gap-1">
+                            <span>{buyer.avatar}</span>
+                            <span className="truncate max-w-[80px]">{buyer.name}</span>
+                          </span>
+                          {isCricket && (
+                            <span className="text-[10px] flex-shrink-0" title={isOverseas ? "Overseas Player" : "Indian Player"}>
+                              {isOverseas ? "✈️" : "🇮🇳"}
+                            </span>
+                          )}
+                        </div>
+
+                        {isCricket ? (
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border truncate mt-1 ${role.colorClass}`}>
+                            {role.label}
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1">
+                            <span className="text-yellow-400 font-bold">★ {item.imdbRating}</span>
+                            <span className="truncate max-w-[80px]">{item.genre}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
-            )}
-          </div>
-
-          {/* Acquired Items Grid */}
-          {displayedItems.length === 0 ? (
+            )
+          ) : displayedItems.length === 0 ? (
             <div className="p-8 rounded-xl bg-black/20 border border-dashed border-border/60 text-center flex flex-col items-center justify-center gap-2">
               {isCricket ? <Award size={28} className="text-muted-foreground/40" /> : <Film size={28} className="text-muted-foreground/40" />}
               <p className="text-xs text-muted-foreground">
-                {isCricket
-                  ? "No cricketers acquired yet. Win live bidding rounds to build your franchise squad!"
-                  : "No movies acquired yet. Win live bidding rounds to build your studio slate!"}
+                {isViewingSelf
+                  ? `No ${isCricket ? "cricketers" : "movies"} acquired yet. Win live bidding rounds to build your squad!`
+                  : `${activeFranchiseOrProducer.name} has not acquired any ${isCricket ? "cricketers" : "movies"} yet.`}
               </p>
             </div>
           ) : (
@@ -1470,7 +2627,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                 return (
                   <div
                     key={`${item.id}_${idx}`}
-                    className="group bg-black/50 border border-border/70 hover:border-gold/50 rounded-xl p-2.5 flex flex-col gap-2 transition-all shadow-md"
+                    className="group bg-black/50 border border-border/70 hover:border-gold/50 rounded-xl p-2.5 flex flex-col gap-2 transition-all shadow-md text-left"
                   >
                     <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-lg overflow-hidden relative shadow-inner bg-black`}>
                       <Poster movie={item} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
@@ -1507,23 +2664,862 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
           )}
         </section>
       </main>
+
+      {/* Host Custom Timer Modal */}
+      <Dialog open={showTimerModal} onOpenChange={setShowTimerModal}>
+        <DialogContent className="max-w-md bg-panel border-gold/40 text-cream p-6 rounded-2xl shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-gold font-display flex items-center gap-2">
+              <Timer className="text-gold" size={20} /> Host: Mid-Auction Timer Settings
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-4 mt-2">
+            <p className="text-xs text-muted-foreground">
+              Adjust or extend the countdown timer mid-auction without interrupting bidding data. Changes apply immediately to all participants in real time.
+            </p>
+
+            {/* Presets */}
+            <div>
+              <span className="text-xs font-bold text-cream uppercase tracking-wider block mb-2">
+                Quick Presets:
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                {[10, 15, 20, 30, 45, 60].map((sec) => (
+                  <button
+                    key={sec}
+                    type="button"
+                    onClick={() => {
+                      handleUpdateTimer(sec);
+                      setShowTimerModal(false);
+                    }}
+                    className="p-2.5 rounded-xl bg-black/40 hover:bg-gold/20 border border-border/70 hover:border-gold text-xs font-mono font-bold text-cream hover:text-gold cursor-pointer transition-all text-center"
+                  >
+                    {sec} Seconds
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Extensions */}
+            <div>
+              <span className="text-xs font-bold text-cream uppercase tracking-wider block mb-2">
+                Quick Extensions:
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleUpdateTimer(10, true);
+                    setShowTimerModal(false);
+                  }}
+                  className="p-2.5 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs font-mono font-bold text-emerald-300 cursor-pointer transition-all text-center"
+                >
+                  +10s to Current Clock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleUpdateTimer(20, true);
+                    setShowTimerModal(false);
+                  }}
+                  className="p-2.5 rounded-xl bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs font-mono font-bold text-emerald-300 cursor-pointer transition-all text-center"
+                >
+                  +20s to Current Clock
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Seconds Input */}
+            <div className="pt-2 border-t border-border/60">
+              <span className="text-xs font-bold text-cream uppercase tracking-wider block mb-2">
+                Set Exact Custom Seconds:
+              </span>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const val = parseInt(manualSecondsInput.trim(), 10);
+                  if (!isNaN(val) && val >= 3) {
+                    handleUpdateTimer(val);
+                    setShowTimerModal(false);
+                  }
+                }}
+                className="flex items-center gap-2"
+              >
+                <input
+                  type="number"
+                  min="3"
+                  max="300"
+                  value={manualSecondsInput}
+                  onChange={(e) => setManualSecondsInput(e.target.value)}
+                  placeholder="e.g. 10"
+                  className="flex-1 bg-black/60 border border-border/70 focus:border-gold rounded-xl px-3 py-2 text-xs font-mono text-cream outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider cursor-pointer hover:brightness-110"
+                >
+                  Set Seconds
+                </button>
+              </form>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Page>
   );
 }
 
 // -------------------------------------------------------------
+// 5. IPL CRICKET TOURNAMENT SIMULATION HUB
 // -------------------------------------------------------------
-// 5. RESULTS SCREEN (SYNCHRONIZED SLATE SUBMISSION & GRAND JURY)
+export function IplTournamentHub({
+  room,
+  currentUser,
+  onNewAuction,
+  rankings,
+}: {
+  room: RoomState;
+  currentUser: any;
+  onNewAuction: () => void;
+  rankings: PlayerScore[];
+}) {
+  const [tournament, setTournament] = useState<TournamentState>(() => {
+    if (room.tournamentData) return room.tournamentData;
+    return initializeIplTournament(room.roomCode, room.players, room.submittedSlates || {});
+  });
+
+  const [activeTab, setActiveTab] = useState<"MATCHES" | "STANDINGS" | "PLAYOFFS" | "PODIUM" | "EVALUATION">("MATCHES");
+  const [selectedMatch, setSelectedMatch] = useState<MatchFixture | null>(null);
+  const [simulating, setSimulating] = useState(false);
+
+  useEffect(() => {
+    if (room.tournamentData) {
+      setTournament(room.tournamentData);
+    }
+  }, [room.tournamentData]);
+
+  const nextUnplayedIdx = tournament.fixtures.findIndex((f) => !f.isPlayed);
+  const nextFixture = nextUnplayedIdx !== -1 ? tournament.fixtures[nextUnplayedIdx] : null;
+  const isCompleted = tournament.isCompleted || (nextUnplayedIdx === -1 && tournament.fixtures.length > 0);
+  const playedFixtures = tournament.fixtures.filter((f) => f.isPlayed);
+  const isHost = room.hostId === currentUser?.id;
+
+  const handleSimulateNext = async () => {
+    if (!isHost || nextUnplayedIdx === -1 || simulating) return;
+    setSimulating(true);
+    playDramaticTickSound(1);
+
+    try {
+      const updated = await simulateMatch(tournament, nextUnplayedIdx);
+      setTournament(updated);
+      saveTournamentState(room.roomCode, updated);
+
+      if (updated.isCompleted) {
+        playSoldCelebrationSound();
+        playMemeAirhornSound();
+        setActiveTab("PODIUM");
+      } else {
+        playSoldCelebrationSound();
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleSimulateAll = async () => {
+    if (!isHost || simulating) return;
+    setSimulating(true);
+
+    try {
+      let curr = tournament;
+      while (true) {
+        const nextIdx = curr.fixtures.findIndex((f) => !f.isPlayed);
+        if (nextIdx === -1) break;
+        curr = await simulateMatch(curr, nextIdx);
+        setTournament(curr);
+        saveTournamentState(room.roomCode, curr);
+        if (curr.isCompleted) break;
+      }
+      playSoldCelebrationSound();
+      playMemeAirhornSound();
+      setActiveTab("PODIUM");
+    } catch {
+      // ignore
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleResetTournament = () => {
+    if (!isHost) return;
+    const fresh = initializeIplTournament(room.roomCode, room.players, room.submittedSlates || {});
+    setTournament(fresh);
+    saveTournamentState(room.roomCode, fresh);
+    setActiveTab("MATCHES");
+  };
+
+  // Sort standings by points desc, then NRR desc
+  const sortedStandings = [...tournament.pointsTable].sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    return b.nrr - a.nrr;
+  });
+
+  return (
+    <section className="w-full flex flex-col items-center gap-6 animate-in fade-in duration-300">
+      {/* HEADER BANNER */}
+      <div className="w-full p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-panel via-panel-strong to-panel border border-gold/40 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 text-left relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-bl from-gold/15 via-transparent to-transparent pointer-events-none" />
+
+        <div className="flex flex-col gap-1.5 relative z-10">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 rounded-lg bg-gold/15 text-gold border border-gold/30">
+              <Trophy size={16} />
+            </span>
+            <GameStatus>
+              {isCompleted ? "🏆 Championship Concluded" : "🏏 IPL Championship Tournament"}
+            </GameStatus>
+          </div>
+          <h1 className="text-2xl sm:text-4xl font-black text-cream font-display mt-1">
+            IPL MEGA MATCH SIMULATION
+          </h1>
+          <p className="text-xs sm:text-sm text-muted-foreground max-w-xl">
+            {isCompleted
+              ? `Championship matches completed! ${tournament.championTeamName || "Champion"} has lifted the IPL Trophy!`
+              : `Simulating full franchise clashes with real Playing 11s, T20 scorecards, and the IPL Playoffs!`}
+          </p>
+        </div>
+
+        {/* Action Controls - HOST ONLY */}
+        <div className="flex items-center gap-2.5 flex-wrap relative z-10">
+          {isHost ? (
+            <>
+              {!isCompleted && nextFixture && (
+                <button
+                  type="button"
+                  onClick={handleSimulateNext}
+                  disabled={simulating}
+                  className="btn btn-primary px-5 py-3 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-xl shadow-gold/25 hover:brightness-110 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {simulating ? <LoaderCircle size={15} className="animate-spin" /> : <Play size={15} />}
+                  <span>Simulate Next ({nextFixture.stageName})</span>
+                </button>
+              )}
+
+              {!isCompleted && (
+                <button
+                  type="button"
+                  onClick={handleSimulateAll}
+                  disabled={simulating}
+                  className="px-4 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Zap size={14} /> Simulate All
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleResetTournament}
+                className="px-3.5 py-3 rounded-2xl border border-border/80 hover:border-gold/40 text-cream text-xs font-bold flex items-center gap-1.5 bg-black/40 cursor-pointer"
+                title="Re-simulate from start"
+              >
+                <RotateCcw size={14} /> Reset
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-black/60 border border-gold/40 text-gold text-xs font-bold shadow-lg">
+              <Shield size={16} className="text-gold animate-pulse" />
+              <span>Live Spectator • Host controls match simulation</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* HUB SUB-TABS */}
+      <div className="w-full flex items-center justify-center gap-2 flex-wrap border-b border-border/70 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab("MATCHES")}
+          className={`px-4 py-2 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === "MATCHES"
+              ? "bg-gold text-black border-gold shadow-lg shadow-gold/10"
+              : "bg-black/40 border-border/80 text-cream/90 hover:bg-black/60"
+          }`}
+        >
+          <Gavel size={14} />
+          <span>Match Center</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-black/60 text-gold text-[10px] font-mono font-bold">
+            {playedFixtures.length}/{tournament.fixtures.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("STANDINGS")}
+          className={`px-4 py-2 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === "STANDINGS"
+              ? "bg-gold text-black border-gold shadow-lg shadow-gold/10"
+              : "bg-black/40 border-border/80 text-cream/90 hover:bg-black/60"
+          }`}
+        >
+          <Shield size={14} />
+          <span>IPL Points Table</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("PLAYOFFS")}
+          className={`px-4 py-2 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === "PLAYOFFS"
+              ? "bg-gold text-black border-gold shadow-lg shadow-gold/10"
+              : "bg-black/40 border-border/80 text-cream/90 hover:bg-black/60"
+          }`}
+        >
+          <Zap size={14} />
+          <span>Playoff Bracket</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("PODIUM")}
+          className={`px-4 py-2 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === "PODIUM"
+              ? "bg-gold text-black border-gold shadow-lg shadow-gold/10"
+              : "bg-black/40 border-border/80 text-cream/90 hover:bg-black/60"
+          }`}
+        >
+          <Trophy size={14} className="text-amber-400" />
+          <span>Champion Podium & Caps</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("EVALUATION")}
+          className={`px-4 py-2 rounded-2xl border text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+            activeTab === "EVALUATION"
+              ? "bg-gold text-black border-gold shadow-lg shadow-gold/10"
+              : "bg-black/40 border-border/80 text-cream/90 hover:bg-black/60"
+          }`}
+        >
+          <Award size={14} />
+          <span>Franchise Evaluations</span>
+        </button>
+      </div>
+
+      {/* 1. MATCH CENTER VIEW */}
+      {activeTab === "MATCHES" && (
+        <div className="w-full flex flex-col gap-4 text-left">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {tournament.fixtures.map((fixture) => {
+              const isNext = fixture.id === nextFixture?.id;
+              const isFinal = fixture.stage === "FINAL";
+
+              return (
+                <div
+                  key={fixture.id}
+                  className={`p-5 rounded-3xl border transition-all flex flex-col justify-between gap-3 shadow-xl relative overflow-hidden ${
+                    isFinal
+                      ? "bg-gradient-to-b from-panel via-panel-strong to-black border-gold/60 shadow-gold/10"
+                      : fixture.isPlayed
+                        ? "bg-panel/90 border-border/80"
+                        : isNext
+                          ? "bg-panel/90 border-cyan-500/50 ring-2 ring-cyan-500/20 shadow-cyan-950/30"
+                          : "bg-panel/50 border-border/50 opacity-75"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-2.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-black/60 text-gold border border-gold/30">
+                      {fixture.stageName}
+                    </span>
+                    <span className="text-xs font-bold">
+                      {fixture.isPlayed ? (
+                        <span className="text-emerald-400 flex items-center gap-1 font-mono">
+                          <CheckCircle2 size={12} /> Result Available
+                        </span>
+                      ) : isNext ? (
+                        <span className="text-cyan-400 flex items-center gap-1 font-mono animate-pulse">
+                          ⚡ Up Next
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground font-mono">⏳ Scheduled</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Team Matchup & Scores */}
+                  <div className="flex flex-col gap-2 my-1">
+                    {/* Team 1 */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-8 h-8 rounded-xl bg-gold/15 text-gold border border-gold/30 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                          {fixture.team1Name.slice(0, 2).toUpperCase()}
+                        </span>
+                        <strong className="text-sm font-bold text-cream truncate">
+                          {fixture.team1Name}
+                        </strong>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        {fixture.innings1 ? (
+                          <strong className="text-sm font-mono font-black text-gold">
+                            {fixture.innings1.runs}/{fixture.innings1.wickets}{" "}
+                            <span className="text-[10px] text-muted-foreground font-normal">
+                              ({fixture.innings1.overs} ov)
+                            </span>
+                          </strong>
+                        ) : (
+                          <span className="text-xs text-muted-foreground font-mono">—</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Team 2 */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-8 h-8 rounded-xl bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 flex items-center justify-center font-bold text-xs flex-shrink-0">
+                          {fixture.team2Name.slice(0, 2).toUpperCase()}
+                        </span>
+                        <strong className="text-sm font-bold text-cream truncate">
+                          {fixture.team2Name}
+                        </strong>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        {fixture.innings2 ? (
+                          <strong className="text-sm font-mono font-black text-gold">
+                            {fixture.innings2.runs}/{fixture.innings2.wickets}{" "}
+                            <span className="text-[10px] text-muted-foreground font-normal">
+                              ({fixture.innings2.overs} ov)
+                            </span>
+                          </strong>
+                        ) : (
+                          <span className="text-xs text-muted-foreground font-mono">—</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Result & Highlights */}
+                  {fixture.isPlayed ? (
+                    <div className="pt-2 border-t border-border/60 flex flex-col gap-1.5">
+                      <div className="text-xs font-black text-emerald-400">
+                        🏆 {fixture.winnerName} {fixture.winMargin}
+                      </div>
+                      {fixture.commentaryHighlight && (
+                        <p className="text-[11px] text-muted-foreground italic line-clamp-2">
+                          "{fixture.commentaryHighlight}"
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedMatch(fixture)}
+                        className="mt-1 text-[11px] text-gold hover:text-amber-300 font-bold flex items-center gap-1 w-fit cursor-pointer"
+                      >
+                        View Full Scorecard & Stats →
+                      </button>
+                    </div>
+                  ) : isNext ? (
+                    isHost ? (
+                      <button
+                        type="button"
+                        onClick={handleSimulateNext}
+                        disabled={simulating}
+                        className="mt-1 w-full py-2.5 rounded-xl bg-gradient-to-r from-gold to-amber-500 text-black font-black text-xs uppercase tracking-wider hover:brightness-110 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {simulating ? <LoaderCircle size={14} className="animate-spin" /> : <Play size={14} />}
+                        <span>Simulate Match Now</span>
+                      </button>
+                    ) : (
+                      <div className="mt-1 w-full py-2 px-3 rounded-xl bg-black/40 border border-border/60 text-center text-xs text-muted-foreground flex items-center justify-center gap-1.5 font-bold">
+                        <LoaderCircle size={13} className="animate-spin text-gold" />
+                        <span>Waiting for Host to simulate match...</span>
+                      </div>
+                    )
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 2. IPL POINTS TABLE */}
+      {activeTab === "STANDINGS" && (
+        <div className="w-full bg-panel/90 border border-border/80 rounded-3xl p-6 shadow-xl flex flex-col gap-4 text-left overflow-x-auto">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-black text-cream font-display uppercase tracking-wider flex items-center gap-2">
+                <Shield className="text-gold" size={18} /> Official IPL Points Table
+              </h2>
+              <span className="text-xs text-muted-foreground">
+                Top 4 franchises qualify for Qualifier 1 & Eliminator playoffs.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+              <span className="text-cream font-bold">Playoff Zone</span>
+            </div>
+          </div>
+
+          <table className="w-full border-collapse text-xs sm:text-sm text-left">
+            <thead>
+              <tr className="border-b border-border/80 text-muted-foreground text-[11px] uppercase tracking-wider">
+                <th className="py-2.5 px-3">Pos</th>
+                <th className="py-2.5 px-3">Franchise</th>
+                <th className="py-2.5 px-3 text-center">P</th>
+                <th className="py-2.5 px-3 text-center">W</th>
+                <th className="py-2.5 px-3 text-center">L</th>
+                <th className="py-2.5 px-3 text-center font-black text-gold">PTS</th>
+                <th className="py-2.5 px-3 text-center font-mono">NRR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedStandings.map((entry, idx) => {
+                const isPlayoffZone = idx < 4;
+                return (
+                  <tr
+                    key={entry.teamId}
+                    className={`border-b border-border/50 transition-colors ${
+                      isPlayoffZone ? "bg-emerald-950/15 hover:bg-emerald-950/25" : "hover:bg-black/30"
+                    }`}
+                  >
+                    <td className="py-3 px-3 font-bold">
+                      <span
+                        className={`w-6 h-6 rounded-full inline-flex items-center justify-center text-xs font-black ${
+                          idx === 0
+                            ? "bg-gold text-black"
+                            : isPlayoffZone
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : "bg-black/40 text-muted-foreground"
+                        }`}
+                      >
+                        {idx + 1}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3 font-bold text-cream">
+                      <div className="flex items-center gap-2">
+                        <span>{entry.teamName}</span>
+                        {isPlayoffZone && (
+                          <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-500/40">
+                            Q
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono">{entry.played}</td>
+                    <td className="py-3 px-3 text-center font-mono text-emerald-400 font-bold">{entry.won}</td>
+                    <td className="py-3 px-3 text-center font-mono text-red-400">{entry.lost}</td>
+                    <td className="py-3 px-3 text-center font-mono font-black text-gold text-base">
+                      {entry.points}
+                    </td>
+                    <td className="py-3 px-3 text-center font-mono font-bold text-cyan-300">
+                      {entry.nrr > 0 ? `+${entry.nrr.toFixed(3)}` : entry.nrr.toFixed(3)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* 3. PLAYOFF BRACKET TREE */}
+      {activeTab === "PLAYOFFS" && (
+        <div className="w-full bg-panel/90 border border-border/80 rounded-3xl p-6 shadow-xl flex flex-col gap-6 text-left">
+          <div>
+            <h2 className="text-lg font-black text-cream font-display uppercase tracking-wider flex items-center gap-2">
+              <Zap className="text-gold" size={18} /> IPL Playoff Tree & Finals Ladder
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              Qualifier 1 winner goes straight to the Grand Final. Eliminator winner clashes in Qualifier 2!
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+            {/* Round 1: Q1 & Eliminator */}
+            <div className="flex flex-col gap-4">
+              <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                Round 1: Playoffs
+              </span>
+
+              {/* Q1 */}
+              <div className="p-4 rounded-2xl bg-black/60 border border-gold/40 shadow-md">
+                <span className="text-[10px] font-bold text-gold uppercase block mb-1">
+                  Qualifier 1 (#1 vs #2)
+                </span>
+                <strong className="block text-xs text-cream">
+                  {tournament.fixtures.find((f) => f.stage === "QUALIFIER_1")?.team1Name || "1st Place"} vs{" "}
+                  {tournament.fixtures.find((f) => f.stage === "QUALIFIER_1")?.team2Name || "2nd Place"}
+                </strong>
+                <span className="text-[10px] text-emerald-400 font-bold mt-1 block">
+                  Winner ➔ Grand Final
+                </span>
+              </div>
+
+              {/* Eliminator */}
+              <div className="p-4 rounded-2xl bg-black/60 border border-red-500/40 shadow-md">
+                <span className="text-[10px] font-bold text-red-400 uppercase block mb-1">
+                  Eliminator (#3 vs #4)
+                </span>
+                <strong className="block text-xs text-cream">
+                  {tournament.fixtures.find((f) => f.stage === "ELIMINATOR")?.team1Name || "3rd Place"} vs{" "}
+                  {tournament.fixtures.find((f) => f.stage === "ELIMINATOR")?.team2Name || "4th Place"}
+                </strong>
+                <span className="text-[10px] text-amber-400 font-bold mt-1 block">
+                  Winner ➔ Qualifier 2
+                </span>
+              </div>
+            </div>
+
+            {/* Round 2: Q2 */}
+            <div className="flex flex-col gap-4">
+              <span className="text-xs font-black uppercase tracking-wider text-muted-foreground">
+                Round 2: Semi-Final
+              </span>
+
+              <div className="p-4 rounded-2xl bg-black/60 border border-cyan-500/40 shadow-md">
+                <span className="text-[10px] font-bold text-cyan-400 uppercase block mb-1">
+                  Qualifier 2
+                </span>
+                <strong className="block text-xs text-cream">
+                  {tournament.fixtures.find((f) => f.stage === "QUALIFIER_2")?.team1Name || "Loser Q1"} vs{" "}
+                  {tournament.fixtures.find((f) => f.stage === "QUALIFIER_2")?.team2Name || "Winner Eliminator"}
+                </strong>
+                <span className="text-[10px] text-emerald-400 font-bold mt-1 block">
+                  Winner ➔ Grand Final
+                </span>
+              </div>
+            </div>
+
+            {/* Round 3: Grand Final */}
+            <div className="flex flex-col gap-4">
+              <span className="text-xs font-black uppercase tracking-wider text-gold">
+                Grand Final Showdown
+              </span>
+
+              <div className="p-5 rounded-3xl bg-gradient-to-b from-amber-950/40 to-panel border-2 border-gold shadow-2xl">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Trophy size={16} className="text-gold" />
+                  <span className="text-xs font-black text-gold uppercase">IPL GRAND FINAL</span>
+                </div>
+                <strong className="block text-sm text-cream font-display">
+                  {tournament.fixtures.find((f) => f.stage === "FINAL")?.team1Name || "Winner Q1"} vs{" "}
+                  {tournament.fixtures.find((f) => f.stage === "FINAL")?.team2Name || "Winner Q2"}
+                </strong>
+                {tournament.championTeamName ? (
+                  <div className="mt-3 p-2 rounded-xl bg-gold/20 border border-gold/40 text-center">
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground block">
+                      CHAMPION
+                    </span>
+                    <strong className="text-sm font-black text-gold font-display">
+                      👑 {tournament.championTeamName}
+                    </strong>
+                  </div>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground mt-2 block">
+                    Play match to decide champion!
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. CHAMPION PODIUM & CAPS VIEW */}
+      {activeTab === "PODIUM" && (
+        <div className="w-full bg-panel/90 border border-gold/40 rounded-3xl p-6 sm:p-8 shadow-2xl flex flex-col items-center text-center gap-6 relative overflow-hidden">
+          <div className="w-24 h-24 rounded-full bg-gold/20 border-2 border-gold flex items-center justify-center text-5xl shadow-2xl shadow-gold/30 animate-bounce">
+            🏆
+          </div>
+
+          <div>
+            <span className="text-xs uppercase font-black text-gold tracking-widest block mb-1">
+              IPL Grand Champions
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-black text-cream font-display">
+              {tournament.championTeamName || "Tournament In Progress"}
+            </h2>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+              Lifted the coveted IPL trophy after an intense playoff campaign!
+            </p>
+          </div>
+
+          {/* Orange Cap & Purple Cap Awards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-2xl mt-2">
+            {/* Orange Cap */}
+            <div className="p-5 rounded-2xl bg-gradient-to-b from-orange-950/60 to-black/80 border border-orange-500/60 shadow-xl flex items-center gap-4 text-left">
+              <div className="w-14 h-14 rounded-2xl bg-orange-500/20 border-2 border-orange-500 flex items-center justify-center text-2xl flex-shrink-0">
+                🧢
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] uppercase font-black text-orange-400 tracking-wider">
+                  Orange Cap (Top Batsman)
+                </span>
+                <strong className="text-base font-black text-cream truncate">
+                  {tournament.orangeCap?.playerName || "Evaluating..."}
+                </strong>
+                <span className="text-xs font-mono font-bold text-orange-300">
+                  {tournament.orangeCap?.runs || 0} Runs • {tournament.orangeCap?.teamName || "—"}
+                </span>
+              </div>
+            </div>
+
+            {/* Purple Cap */}
+            <div className="p-5 rounded-2xl bg-gradient-to-b from-purple-950/60 to-black/80 border border-purple-500/60 shadow-xl flex items-center gap-4 text-left">
+              <div className="w-14 h-14 rounded-2xl bg-purple-500/20 border-2 border-purple-500 flex items-center justify-center text-2xl flex-shrink-0">
+                🟣
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] uppercase font-black text-purple-400 tracking-wider">
+                  Purple Cap (Top Bowler)
+                </span>
+                <strong className="text-base font-black text-cream truncate">
+                  {tournament.purpleCap?.playerName || "Evaluating..."}
+                </strong>
+                <span className="text-xs font-mono font-bold text-purple-300">
+                  {tournament.purpleCap?.wickets || 0} Wickets • {tournament.purpleCap?.teamName || "—"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. GRAND JURY EVALUATION VIEW */}
+      {activeTab === "EVALUATION" && (
+        <div className="w-full flex flex-col items-center gap-4">
+          <RankingList players={room.players} rankings={rankings} isCricket={true} />
+        </div>
+      )}
+
+      {/* DETAILED SCORECARD MODAL */}
+      <Dialog open={Boolean(selectedMatch)} onOpenChange={(open) => !open && setSelectedMatch(null)}>
+        <DialogContent className="max-w-xl p-6 bg-panel/95 border-gold/40 text-cream backdrop-blur-xl">
+          {selectedMatch && (
+            <div className="flex flex-col gap-4 text-left">
+              <DialogHeader className="border-b border-border/80 pb-3">
+                <DialogTitle className="text-lg font-black text-cream font-display flex items-center justify-between">
+                  <span>{selectedMatch.stageName} Scorecard</span>
+                  <span className="text-xs font-mono text-emerald-400">{selectedMatch.winMargin}</span>
+                </DialogTitle>
+              </DialogHeader>
+
+              {/* Innings 1 Breakdown */}
+              {selectedMatch.innings1 && (
+                <div className="p-4 rounded-2xl bg-black/50 border border-border/70 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-sm font-bold text-cream">
+                      {selectedMatch.innings1.teamName} Innings
+                    </strong>
+                    <span className="text-base font-mono font-black text-gold">
+                      {selectedMatch.innings1.runs}/{selectedMatch.innings1.wickets} ({selectedMatch.innings1.overs} ov)
+                    </span>
+                  </div>
+
+                  {selectedMatch.innings1.topBatter && (
+                    <div className="text-xs flex items-center justify-between text-muted-foreground pt-1 border-t border-border/40">
+                      <span>Top Batter: <strong className="text-cream">{selectedMatch.innings1.topBatter.name}</strong></span>
+                      <span className="font-mono text-gold font-bold">
+                        {selectedMatch.innings1.topBatter.runs} ({selectedMatch.innings1.topBatter.balls}) • 4s: {selectedMatch.innings1.topBatter.fours} • 6s: {selectedMatch.innings1.topBatter.sixes}
+                      </span>
+                    </div>
+                  )}
+
+                  {selectedMatch.innings1.topBowler && (
+                    <div className="text-xs flex items-center justify-between text-muted-foreground">
+                      <span>Top Bowler: <strong className="text-cream">{selectedMatch.innings1.topBowler.name}</strong></span>
+                      <span className="font-mono text-cyan-300 font-bold">
+                        {selectedMatch.innings1.topBowler.wickets}/{selectedMatch.innings1.topBowler.runs} ({selectedMatch.innings1.topBowler.overs} ov)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Innings 2 Breakdown */}
+              {selectedMatch.innings2 && (
+                <div className="p-4 rounded-2xl bg-black/50 border border-border/70 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <strong className="text-sm font-bold text-cream">
+                      {selectedMatch.innings2.teamName} Innings
+                    </strong>
+                    <span className="text-base font-mono font-black text-gold">
+                      {selectedMatch.innings2.runs}/{selectedMatch.innings2.wickets} ({selectedMatch.innings2.overs} ov)
+                    </span>
+                  </div>
+
+                  {selectedMatch.innings2.topBatter && (
+                    <div className="text-xs flex items-center justify-between text-muted-foreground pt-1 border-t border-border/40">
+                      <span>Top Batter: <strong className="text-cream">{selectedMatch.innings2.topBatter.name}</strong></span>
+                      <span className="font-mono text-gold font-bold">
+                        {selectedMatch.innings2.topBatter.runs} ({selectedMatch.innings2.topBatter.balls}) • 4s: {selectedMatch.innings2.topBatter.fours} • 6s: {selectedMatch.innings2.topBatter.sixes}
+                      </span>
+                    </div>
+                  )}
+
+                  {selectedMatch.innings2.topBowler && (
+                    <div className="text-xs flex items-center justify-between text-muted-foreground">
+                      <span>Top Bowler: <strong className="text-cream">{selectedMatch.innings2.topBowler.name}</strong></span>
+                      <span className="font-mono text-cyan-300 font-bold">
+                        {selectedMatch.innings2.topBowler.wickets}/{selectedMatch.innings2.topBowler.runs} ({selectedMatch.innings2.topBowler.overs} ov)
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Player of the Match & Commentary */}
+              {selectedMatch.playerOfTheMatch && (
+                <div className="p-3 rounded-xl bg-gold/15 border border-gold/30 flex items-center justify-between text-xs">
+                  <span className="font-bold text-gold flex items-center gap-1">
+                    <Star size={13} /> Player of the Match
+                  </span>
+                  <span className="font-black text-cream">
+                    {selectedMatch.playerOfTheMatch.name} ({selectedMatch.playerOfTheMatch.performance})
+                  </span>
+                </div>
+              )}
+
+              {selectedMatch.commentaryHighlight && (
+                <p className="text-xs text-muted-foreground italic bg-black/40 p-3 rounded-xl border border-border/60">
+                  "{selectedMatch.commentaryHighlight}"
+                </p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Start New Auction Button */}
+      <div className="flex items-center gap-4 mt-6">
+        <button
+          type="button"
+          onClick={onNewAuction}
+          className="btn btn-primary px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red to-rose-600 font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-red/25 flex items-center gap-2 cursor-pointer"
+        >
+          <RotateCcw size={16} /> Start New Auction
+        </button>
+      </div>
+    </section>
+  );
+}
+
+// -------------------------------------------------------------
+// 6. RESULTS SCREEN (SYNCHRONIZED SLATE SUBMISSION & GRAND JURY)
 // -------------------------------------------------------------
 export function ResultsScreen({ roomCode }: { roomCode: string }) {
   const code = roomCode.toUpperCase();
   const navigate = useNavigate();
-  const [room, setRoom] = useState<RoomState | null>(() => getOrCreateRoom(code));
+  const [room, setRoom] = useState<RoomState | null>(() => getRoom(code));
   const currentUser = getCurrentUser();
   const me = room?.players.find((p) => p.id === currentUser.id) || room?.players[0];
 
   const userWonItems = useMemo(() => me?.movies || [], [me?.movies]);
-  const isCricket = room?.auctionType === "CRICKET" || userWonItems.some((m) => m.auctionType === "CRICKET" || m.role);
+  const isCricket =
+    room?.auctionType === "CRICKET" ||
+    code.startsWith("IPL") ||
+    userWonItems.some((m) => m.auctionType === "CRICKET" || m.role);
 
   // Default optimal selection
   const initialOptimal = useMemo(() => {
@@ -1551,15 +3547,31 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
 
   // Synchronize state with real-time multiplayer updates
   useEffect(() => {
-    const activeRoom = getOrCreateRoom(code);
-    setRoom(activeRoom);
-    if (activeRoom.portfolioRankings && activeRoom.portfolioRankings.length > 0) {
-      setRankings(activeRoom.portfolioRankings);
-      setStep("final");
-    } else if (activeRoom.status === "EVALUATING") {
-      setStep("evaluating");
-    } else if (activeRoom.submittedSlates?.[currentUser.id]?.movieIds?.length) {
-      setStep((prev) => (prev === "select" ? "waiting" : prev));
+    void fetchRemoteRoom(code).then((remote) => {
+      if (remote) {
+        setRoom(remote);
+        if (remote.portfolioRankings && remote.portfolioRankings.length > 0) {
+          setRankings(remote.portfolioRankings);
+          setStep("final");
+        } else if (remote.status === "EVALUATING") {
+          setStep("evaluating");
+        } else if (remote.submittedSlates?.[currentUser.id]?.movieIds?.length) {
+          setStep((prev) => (prev === "select" ? "waiting" : prev));
+        }
+      }
+    });
+
+    const activeRoom = getRoom(code);
+    if (activeRoom) {
+      setRoom(activeRoom);
+      if (activeRoom.portfolioRankings && activeRoom.portfolioRankings.length > 0) {
+        setRankings(activeRoom.portfolioRankings);
+        setStep("final");
+      } else if (activeRoom.status === "EVALUATING") {
+        setStep("evaluating");
+      } else if (activeRoom.submittedSlates?.[currentUser.id]?.movieIds?.length) {
+        setStep((prev) => (prev === "select" ? "waiting" : prev));
+      }
     }
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
@@ -1896,7 +3908,8 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                 {room?.players.map((player) => {
                   const isCurrent = player.id === currentUser.id;
                   const isSubmitted = Boolean(room.submittedSlates?.[player.id]?.movieIds?.length);
-                  const isZeroWon = player.movies.length === 0;
+                  const playerWonCount = (player.movies || []).length;
+                  const isZeroWon = playerWonCount === 0;
 
                   return (
                     <div
@@ -1926,7 +3939,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                             )}
                           </div>
                           <div className="text-[11px] text-muted-foreground">
-                            {player.movies.length} acquired • {player.isBot ? "AI Bot" : "Producer"}
+                            {playerWonCount} acquired • {player.isBot ? "AI Bot" : "Producer"}
                           </div>
                         </div>
                       </div>
@@ -2054,33 +4067,40 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
         )}
 
         {step === "final" && (
-          <section className="w-full flex flex-col items-center text-center">
-            <div className="flex items-center gap-2 mb-2">
-              <Trophy size={20} className="text-gold" />
-              <GameStatus>Grand Championship Podium</GameStatus>
-            </div>
+          isCricket && room ? (
+            <IplTournamentHub
+              room={room}
+              currentUser={currentUser}
+              rankings={rankings}
+              onNewAuction={() => navigate({ to: "/create", search: { game: "cricket" } })}
+            />
+          ) : (
+            <section className="w-full flex flex-col items-center text-center">
+              <div className="flex items-center gap-2 mb-2">
+                <Trophy size={20} className="text-gold" />
+                <GameStatus>Grand Championship Podium</GameStatus>
+              </div>
 
-            <h1 className="font-display font-black text-3xl sm:text-5xl text-cream tracking-tight">
-              {isCricket ? "IPL CHAMPIONSHIP LEADERBOARD" : "GRAND JURY LEADERBOARD"}
-            </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-lg">
-              {isCricket
-                ? "Official standings simulated across batting firepower, bowling lethality, team balance, and purse discipline."
-                : "Official standings evaluated across critical acclaim, commercial box office yield, genre synergy, and purse discipline."}
-            </p>
+              <h1 className="font-display font-black text-3xl sm:text-5xl text-cream tracking-tight">
+                GRAND JURY LEADERBOARD
+              </h1>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-1 max-w-lg">
+                Official standings evaluated across critical acclaim, commercial box office yield, genre synergy, and purse discipline.
+              </p>
 
-            <RankingList players={room?.players ?? []} rankings={rankings} isCricket={isCricket} />
+              <RankingList players={room?.players ?? []} rankings={rankings} isCricket={false} />
 
-            <div className="flex items-center gap-4 mt-8">
-              <button
-                type="button"
-                onClick={() => navigate({ to: "/create", search: { game: isCricket ? "cricket" : "cinema" } })}
-                className="btn btn-primary px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red to-rose-600 font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-red/25 flex items-center gap-2"
-              >
-                <RotateCcw size={16} /> Start New Auction
-              </button>
-            </div>
-          </section>
+              <div className="flex items-center gap-4 mt-8">
+                <button
+                  type="button"
+                  onClick={() => navigate({ to: "/create", search: { game: "cinema" } })}
+                  className="btn btn-primary px-8 py-3.5 rounded-2xl bg-gradient-to-r from-red to-rose-600 font-display font-black text-sm uppercase tracking-wider shadow-xl shadow-red/25 flex items-center gap-2 cursor-pointer"
+                >
+                  <RotateCcw size={16} /> Start New Auction
+                </button>
+              </div>
+            </section>
+          )
         )}
       </main>
     </Page>

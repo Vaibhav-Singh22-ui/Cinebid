@@ -15,6 +15,13 @@ import {
 import { isOverseasPlayer, getOptimalPlaying11 } from "./cricket-data";
 import { supabase } from "@/integrations/supabase/client";
 import { generateAiMovieSlate, evaluatePortfoliosWithAi } from "./ai-evaluation";
+import {
+  fetchRoomServerFn,
+  saveRoomServerFn,
+  joinRoomServerFn,
+} from "./room-server-relay";
+
+export { fetchRoomServerFn, saveRoomServerFn, joinRoomServerFn };
 
 export interface ChatMsg {
   id: string;
@@ -77,6 +84,55 @@ export interface RoomState {
   outPlayerIds: string[]; // List of player IDs who clicked OUT on current item
   auctionType?: AuctionType;
   submittedSlates?: Record<string, SubmittedSlate> | undefined;
+  isPaused?: boolean | undefined;
+  tournamentData?: any | undefined;
+  version?: number | undefined; // Monotonic sequence clock to eliminate out-of-order state jitter
+}
+
+export function bumpRoomVersion(room: RoomState): number {
+  const next = (room.version || 0) + 1;
+  room.version = next;
+  return next;
+}
+
+/**
+ * Authoritative Packet Comparator:
+ * Returns TRUE if incoming state is strictly newer than current local state.
+ * Returns FALSE if incoming packet is stale, replayed, or identical (preventing glitches & re-render storms).
+ */
+export function isPacketNewer(current: RoomState | null, incoming: RoomState): boolean {
+  if (!incoming) return false;
+  if (!current) return true;
+
+  // Rule 0: Roster expansion (new player joined room)
+  if ((incoming.players?.length || 0) > (current.players?.length || 0)) {
+    return true;
+  }
+
+  // Rule 1: Round index progression
+  if (incoming.currentMovieIndex > current.currentMovieIndex) {
+    return true;
+  }
+  if (incoming.currentMovieIndex < current.currentMovieIndex) {
+    return false; // Discard older round index
+  }
+
+  // Rule 2: Same round index - monotonic sequence clock check
+  const incomingVer = incoming.version || 0;
+  const currentVer = current.version || 0;
+  if (incomingVer > currentVer) {
+    return true;
+  }
+  if (incomingVer < currentVer) {
+    return false; // Discard older version
+  }
+
+  // Rule 3: Tie-breaker on same version
+  if (incoming.isSold && !current.isSold) return true;
+  if (incoming.currentBid > current.currentBid) return true;
+  if ((incoming.outPlayerIds?.length || 0) > (current.outPlayerIds?.length || 0)) return true;
+
+  return false;
 }
 
 export interface CurrentUser {
@@ -96,30 +152,32 @@ const ROOM_LIST_KEY = "cinebid_active_rooms";
 // -------------------------------------------------------------
 const CHARSET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
-export function generateUniqueRoomCode(): string {
+export function generateUniqueRoomCode(auctionType: AuctionType = "CINEMA"): string {
   const existingRooms = getExistingRoomCodes();
+  const prefix = auctionType === "CRICKET" ? "IPL-" : "CINE-";
   let attempts = 0;
   const maxAttempts = 100;
 
   while (attempts < maxAttempts) {
     attempts++;
-    let code = "";
+    let randomPart = "";
 
     if (typeof window !== "undefined" && window.crypto?.getRandomValues) {
-      const bytes = new Uint8Array(6);
+      const bytes = new Uint8Array(4);
       window.crypto.getRandomValues(bytes);
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 4; i++) {
         const byte = bytes[i] ?? 0;
         const index = byte % CHARSET.length;
-        code += CHARSET[index] || "A";
+        randomPart += CHARSET[index] || "A";
       }
     } else {
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 4; i++) {
         const index = Math.floor(Math.random() * CHARSET.length);
-        code += CHARSET[index] || "A";
+        randomPart += CHARSET[index] || "A";
       }
     }
 
+    const code = `${prefix}${randomPart}`;
     if (!existingRooms.includes(code)) {
       registerRoomCode(code);
       return code;
@@ -127,9 +185,7 @@ export function generateUniqueRoomCode(): string {
   }
 
   const timestampPart = Date.now().toString(36).toUpperCase().slice(-4);
-  const c1 = CHARSET[Math.floor(Math.random() * CHARSET.length)] || "X";
-  const c2 = CHARSET[Math.floor(Math.random() * CHARSET.length)] || "Y";
-  const fallbackCode = (timestampPart + c1 + c2).slice(0, 6);
+  const fallbackCode = `${prefix}${timestampPart}`;
   registerRoomCode(fallbackCode);
   return fallbackCode;
 }
@@ -290,8 +346,8 @@ export function createRoom(
   hostName: string,
   settings: Partial<RoomSettings> = {},
 ): RoomState {
-  const code = generateUniqueRoomCode();
   const auctionType: AuctionType = settings.auctionType || "CINEMA";
+  const code = generateUniqueRoomCode(auctionType);
   const roomSettings: RoomSettings = {
     ...DEFAULT_ROOM_SETTINGS,
     auctionType,
@@ -346,9 +402,10 @@ export function createRoom(
     chatMessages: [],
     outPlayerIds: [],
     auctionType,
+    version: 1,
   };
 
-  saveRoom(newRoom);
+  saveRoom(newRoom, false, true);
   return newRoom;
 }
 
@@ -450,10 +507,74 @@ if (broadcastChannel) {
   };
 }
 
-export function saveRoom(room: RoomState, skipSupabase = false): void {
+// Debounced sync to prevent Supabase flood during high-frequency bidding/typing
+let syncSupabaseTimer: number | null = null;
+let pendingRoomToSync: RoomState | null = null;
+
+export function queueSupabaseSync(room: RoomState, immediate = false): void {
+  pendingRoomToSync = room;
+  if (syncSupabaseTimer) {
+    window.clearTimeout(syncSupabaseTimer);
+    syncSupabaseTimer = null;
+  }
+  if (immediate) {
+    if (pendingRoomToSync) {
+      void syncRoomToSupabase(pendingRoomToSync);
+      pendingRoomToSync = null;
+    }
+  } else {
+    syncSupabaseTimer = window.setTimeout(() => {
+      if (pendingRoomToSync) {
+        void syncRoomToSupabase(pendingRoomToSync);
+        pendingRoomToSync = null;
+      }
+    }, 450);
+  }
+}
+
+export async function syncRoomToServerRelay(room: RoomState): Promise<void> {
+  if (typeof window === "undefined" || !room?.roomCode) return;
+  try {
+    const code = room.roomCode.toUpperCase();
+    try {
+      await saveRoomServerFn({ data: room });
+      return;
+    } catch {
+      // Fallback to direct HTTP endpoint
+      await fetch(`/api/rooms/${encodeURIComponent(code)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room }),
+      });
+    }
+  } catch {
+    // Non-blocking
+  }
+}
+
+export function saveRoom(
+  room: RoomState,
+  skipSupabase = false,
+  immediateSync = false,
+  isRemoteUpdate = false,
+  skipBroadcast = false,
+): void {
   if (typeof window === "undefined" || !room?.roomCode) return;
   try {
     const key = `${STORAGE_PREFIX}${room.roomCode.toUpperCase()}`;
+    const rawLocal = localStorage.getItem(key);
+
+    if (rawLocal && isRemoteUpdate) {
+      try {
+        const local = JSON.parse(rawLocal) as RoomState;
+        if (!isPacketNewer(local, room)) {
+          return;
+        }
+      } catch {
+        // Continue if parse error
+      }
+    }
+
     localStorage.setItem(key, JSON.stringify(room));
 
     window.dispatchEvent(
@@ -461,13 +582,22 @@ export function saveRoom(room: RoomState, skipSupabase = false): void {
         detail: { roomCode: room.roomCode.toUpperCase(), room },
       }),
     );
-    if (broadcastChannel) {
+
+    // Only broadcast locally across tabs if this mutation originated locally (prevents multi-tab ping-pong)
+    if (broadcastChannel && !isRemoteUpdate) {
       broadcastChannel.postMessage({ roomCode: room.roomCode.toUpperCase(), room });
     }
 
-    if (!skipSupabase) {
-      void syncRoomToSupabase(room);
-      void broadcastRoomState(room, "room_state");
+    // Sync to in-app server room relay for seamless cross-device multiplayer
+    if (!isRemoteUpdate) {
+      void syncRoomToServerRelay(room);
+    }
+
+    if (!skipSupabase && !isRemoteUpdate) {
+      queueSupabaseSync(room, immediateSync);
+      if (!skipBroadcast) {
+        void broadcastRoomState(room, "room_state");
+      }
     }
   } catch (e) {
     console.error("Failed to save room state", e);
@@ -524,50 +654,116 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
     if (!room.settings) {
       room.settings = { ...DEFAULT_ROOM_SETTINGS };
     }
-    if (room.submittedSlates) {
-      room.settings.submittedSlates = room.submittedSlates;
-    }
-    if (room.portfolioRankings) {
-      room.settings.portfolioRankings = room.portfolioRankings;
+
+    // Deeply attach all crucial auction state properties to settings jsonb
+    const richSettings: any = {
+      ...room.settings,
+      auctionType: room.auctionType || room.settings.auctionType || "CINEMA",
+      submittedSlates: room.submittedSlates || room.settings.submittedSlates || {},
+      portfolioRankings: room.portfolioRankings || room.settings.portfolioRankings,
+      tournamentData: room.tournamentData,
+      isPaused: Boolean(room.isPaused),
+      outPlayerIds: room.outPlayerIds || [],
+      bidHistory: (room.bidHistory || []).slice(0, 50),
+      version: room.version || 1,
+    };
+    room.settings = richSettings;
+
+    const currentUser = getCurrentUser();
+    const isHost = room.hostId === currentUser.id;
+
+    // 1. Authoritative Room Record Sync:
+    // ONLY the host may upsert the canonical room record (movie_pool, status, host_id, full settings).
+    // Non-hosts may only update active live auction telemetry (current_bid, current_bidder, seconds_remaining).
+    if (isHost) {
+      const { error: roomErr } = await supabase.from("rooms").upsert(
+        {
+          room_code: code,
+          host_id: room.hostId,
+          host_name: room.hostName,
+          status: room.status,
+          settings: richSettings,
+          current_movie_index: room.currentMovieIndex,
+          current_bid: room.currentBid,
+          current_bidder_id: room.currentBidderId,
+          current_bidder_name: room.currentBidderName,
+          seconds_remaining: room.secondsRemaining,
+          is_sold: room.isSold,
+          movie_pool: room.moviePool as any,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "room_code" },
+      );
+      if (roomErr) {
+        console.error("[Supabase Sync] Host Room upsert error:", roomErr);
+      }
+    } else {
+      const { error: roomErr } = await supabase
+        .from("rooms")
+        .update({
+          current_bid: room.currentBid,
+          current_bidder_id: room.currentBidderId,
+          current_bidder_name: room.currentBidderName,
+          seconds_remaining: room.secondsRemaining,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("room_code", code);
+      if (roomErr) {
+        console.error("[Supabase Sync] Non-host Room update error:", roomErr);
+      }
     }
 
-    // 1. Upsert room record
-    await supabase.from("rooms").upsert(
-      {
-        room_code: code,
-        host_id: room.hostId,
-        host_name: room.hostName,
-        status: room.status,
-        settings: room.settings as any,
-        current_movie_index: room.currentMovieIndex,
-        current_bid: room.currentBid,
-        current_bidder_id: room.currentBidderId,
-        current_bidder_name: room.currentBidderName,
-        seconds_remaining: room.secondsRemaining,
-        is_sold: room.isSold,
-        movie_pool: room.moviePool as any,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "room_code" },
-    );
-
-    // 2. Upsert players
+    // 2. Isolated Player Sync:
+    // Host syncs all players; non-hosts only sync their own player record to eliminate cross-player overwrites
     if (room.players?.length) {
-      const playerRows = room.players.map((p) => ({
-        id: p.id,
+      const playersToUpsert = isHost
+        ? room.players
+        : room.players.filter((p) => p.id === currentUser.id);
+
+      if (playersToUpsert.length > 0) {
+        const playerRows = playersToUpsert.map((p) => ({
+          id: p.id,
+          room_code: code,
+          user_id: p.id,
+          name: p.name,
+          avatar: p.avatar || "CB",
+          color: p.color || "#f5c518",
+          budget: p.budget,
+          initial_budget: p.initialBudget,
+          is_host: p.isHost ?? false,
+          is_bot: p.isBot ?? false,
+          is_ready: p.ready ?? true,
+          movies: (p.movies || []) as any,
+        }));
+        const { error: pErr } = await supabase
+          .from("room_players")
+          .upsert(playerRows, { onConflict: "id,room_code" });
+        if (pErr) {
+          console.error("[Supabase Sync] Players upsert error:", pErr);
+        }
+      }
+    }
+
+    // 3. Upsert rankings if available
+    if (room.portfolioRankings?.length) {
+      const rankingRows = room.portfolioRankings.map((s) => ({
         room_code: code,
-        user_id: p.id,
-        name: p.name,
-        avatar: p.avatar,
-        color: p.color || "#f5c518",
-        budget: p.budget,
-        initial_budget: p.initialBudget,
-        is_host: p.isHost ?? false,
-        is_bot: p.isBot ?? false,
-        is_ready: p.ready ?? true,
-        movies: (p.movies || []) as any,
+        player_id: s.playerId,
+        name: s.name,
+        avatar: s.avatar,
+        color: s.color || null,
+        score: s.score,
+        rank: s.rank,
+        won_count: s.wonCount,
+        remaining_budget: s.remainingBudget,
+        critique: s.critique || "",
+        breakdown: (s.breakdown || {}) as any,
       }));
-      await supabase.from("room_players").upsert(playerRows, { onConflict: "id,room_code" });
+      await supabase.from("room_rankings").delete().eq("room_code", code);
+      const { error: rankErr } = await supabase.from("room_rankings").insert(rankingRows);
+      if (rankErr) {
+        console.error("[Supabase Sync] Rankings insert error:", rankErr);
+      }
     }
   } catch (e) {
     console.warn("Supabase background sync warning:", e);
@@ -582,6 +778,11 @@ export function getRoom(roomCode: string): RoomState | null {
       const parsed = JSON.parse(raw);
       if (!parsed.outPlayerIds) parsed.outPlayerIds = [];
       if (!parsed.auctionType) parsed.auctionType = parsed.settings?.auctionType || "CINEMA";
+      if (Array.isArray(parsed.players)) {
+        parsed.players.forEach((p: any) => {
+          if (!p.movies) p.movies = [];
+        });
+      }
       return parsed;
     }
   } catch (e) {
@@ -593,144 +794,224 @@ export function getRoom(roomCode: string): RoomState | null {
 export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | null> {
   const code = roomCode.toUpperCase();
   try {
-    const { data: remoteRoom, error: roomError } = await supabase
-      .from("rooms")
-      .select("*")
-      .eq("room_code", code)
-      .maybeSingle();
+    // 1. In-App Server Relay (instant, authoritative, works across all devices and browsers)
+    try {
+      let serverRoom: RoomState | null = null;
+      try {
+        const rpcResult = (await fetchRoomServerFn({ data: code })) as RoomState | null;
+        if (rpcResult && rpcResult.roomCode) {
+          serverRoom = rpcResult;
+        }
+      } catch {
+        // Fall back to HTTP endpoint
+      }
 
-    if (roomError || !remoteRoom) return null;
+      if (!serverRoom) {
+        const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.success && json.room) {
+            serverRoom = json.room as RoomState;
+          }
+        }
+      }
 
-    const { data: remotePlayers } = await supabase
-      .from("room_players")
-      .select("*")
-      .eq("room_code", code)
-      .order("joined_at", { ascending: true });
-
-    const { data: remoteMessages } = await supabase
-      .from("room_messages")
-      .select("*")
-      .eq("room_code", code)
-      .order("created_at", { ascending: true })
-      .limit(100);
-
-    const { data: remoteBids } = await supabase
-      .from("room_bids")
-      .select("*")
-      .eq("room_code", code)
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      budget: Number(p.budget),
-      initialBudget: Number(p.initial_budget),
-      movies: p.movies || [],
-      isHost: Boolean(p.is_host),
-      isBot: Boolean(p.is_bot),
-      avatar: p.avatar || "CB",
-      color: p.color,
-      ready: Boolean(p.is_ready),
-    }));
-
-    const mappedMessages: ChatMsg[] = (remoteMessages || []).map((m: any) => ({
-      id: m.id,
-      sender: m.player_name,
-      avatar: getInitials(m.player_name),
-      text: m.body,
-      timestamp: new Date(m.created_at).getTime(),
-      isSystem: m.player_name === "System" || m.player_name === "Auction Host",
-    }));
-
-    const mappedBids: BidRecord[] = (remoteBids || []).map((b: any) => ({
-      id: b.id,
-      playerId: b.player_id,
-      playerName: b.player_name,
-      amount: Number(b.amount),
-      time: new Date(b.created_at).toLocaleTimeString(),
-    }));
-
-    const local = getRoom(code);
-    const existingChat = local?.chatMessages || [];
-    const chatMap = new Map<string, ChatMsg>();
-    mappedMessages.forEach((m) => chatMap.set(m.id, m));
-    existingChat.forEach((m) => {
-      if (!chatMap.has(m.id)) chatMap.set(m.id, m);
-    });
-
-    const bidMap = new Map<string, BidRecord>();
-    mappedBids.forEach((b) => bidMap.set(b.id, b));
-    (local?.bidHistory || []).forEach((b) => {
-      if (!bidMap.has(b.id)) bidMap.set(b.id, b);
-    });
-    const mergedBids = Array.from(bidMap.values()).sort((a, b) => b.amount - a.amount);
-
-    let finalBid = Number(remoteRoom.current_bid);
-    let finalBidderId = remoteRoom.current_bidder_id;
-    let finalBidderName = remoteRoom.current_bidder_name;
-
-    if (
-      local &&
-      local.currentMovieIndex === remoteRoom.current_movie_index &&
-      local.currentBid > finalBid
-    ) {
-      finalBid = local.currentBid;
-      finalBidderId = local.currentBidderId;
-      finalBidderName = local.currentBidderName;
+      if (serverRoom) {
+        const local = getRoom(code);
+        if (!local || isPacketNewer(local, serverRoom)) {
+          saveRoom(serverRoom, true, false, true);
+          return serverRoom;
+        }
+        return local;
+      }
+    } catch {
+      // Server relay network failure, continue to fallbacks
     }
 
-    const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
-    const auctionType: AuctionType = settings.auctionType || local?.auctionType || "CINEMA";
+    // 2. Supabase Fallback (if configured and reachable)
+    try {
+      const { data: remoteRoom, error: roomError } = await supabase
+        .from("rooms")
+        .select("*")
+        .eq("room_code", code)
+        .maybeSingle();
 
-    const parsedRoom: RoomState = {
-      roomCode: remoteRoom.room_code,
-      createdAt: new Date(remoteRoom.created_at).getTime(),
-      settings,
-      hostId: remoteRoom.host_id,
-      hostName: remoteRoom.host_name,
-      status: remoteRoom.status as any,
-      players: mappedPlayers.length ? mappedPlayers : local?.players || [],
-      moviePool: (remoteRoom.movie_pool as unknown as Movie[]) || local?.moviePool || movies,
-      currentMovieIndex: remoteRoom.current_movie_index,
-      currentBid: finalBid,
-      currentBidderId: finalBidderId,
-      currentBidderName: finalBidderName,
-      secondsRemaining: local?.secondsRemaining !== undefined ? local.secondsRemaining : remoteRoom.seconds_remaining,
-      isSold: remoteRoom.is_sold,
-      bidHistory: mergedBids,
-      chatMessages: Array.from(chatMap.values()).sort((a, b) => a.timestamp - b.timestamp),
-      outPlayerIds: local?.outPlayerIds || [],
-      auctionType,
-      submittedSlates: (settings as any)?.submittedSlates || local?.submittedSlates || {},
-      portfolioRankings: (settings as any)?.portfolioRankings || local?.portfolioRankings,
-    };
+      if (!roomError && remoteRoom) {
+        const { data: remotePlayers } = await supabase
+          .from("room_players")
+          .select("*")
+          .eq("room_code", code)
+          .order("joined_at", { ascending: true });
 
-    saveRoom(parsedRoom, true);
-    return parsedRoom;
+        const { data: remoteMessages } = await supabase
+          .from("room_messages")
+          .select("*")
+          .eq("room_code", code)
+          .order("created_at", { ascending: true })
+          .limit(100);
+
+        const { data: remoteBids } = await supabase
+          .from("room_bids")
+          .select("*")
+          .eq("room_code", code)
+          .order("created_at", { ascending: false })
+          .limit(30);
+
+        const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          budget: Number(p.budget),
+          initialBudget: Number(p.initial_budget),
+          movies: p.movies || [],
+          isHost: Boolean(p.is_host),
+          isBot: Boolean(p.is_bot),
+          avatar: p.avatar || "CB",
+          color: p.color,
+          ready: Boolean(p.is_ready),
+        }));
+
+        const mappedMessages: ChatMsg[] = (remoteMessages || []).map((m: any) => ({
+          id: m.id,
+          sender: m.player_name,
+          avatar: getInitials(m.player_name),
+          text: m.body,
+          timestamp: new Date(m.created_at).getTime(),
+          isSystem: m.player_name === "System" || m.player_name === "Auction Host",
+        }));
+
+        const mappedBids: BidRecord[] = (remoteBids || []).map((b: any) => ({
+          id: b.id,
+          playerId: b.player_id,
+          playerName: b.player_name,
+          amount: Number(b.amount),
+          time: new Date(b.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        }));
+
+        const local = getRoom(code);
+
+        // Merge bid history
+        const mergedBids = [...mappedBids];
+        if (local?.bidHistory) {
+          for (const b of local.bidHistory) {
+            if (!mergedBids.some((mb) => mb.id === b.id || (mb.playerId === b.playerId && mb.amount === b.amount))) {
+              mergedBids.push(b);
+            }
+          }
+        }
+
+        // Merge chat messages
+        const chatMap = new Map<string, ChatMsg>();
+        mappedMessages.forEach((m) => chatMap.set(m.id, m));
+        if (local?.chatMessages) {
+          local.chatMessages.forEach((m) => chatMap.set(m.id, m));
+        }
+
+        // Merge players list
+        const playerMap = new Map<string, Player>();
+        mappedPlayers.forEach((p) => playerMap.set(p.id, p));
+        if (local?.players) {
+          local.players.forEach((lp) => {
+            const existing = playerMap.get(lp.id);
+            if (!existing) {
+              playerMap.set(lp.id, lp);
+            } else {
+              if ((lp.movies?.length || 0) >= (existing.movies?.length || 0)) {
+                playerMap.set(lp.id, { ...existing, ...lp });
+              }
+            }
+          });
+        }
+        const mergedPlayers = Array.from(playerMap.values());
+
+        const remoteIndex = remoteRoom.current_movie_index;
+        const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
+        const auctionType: AuctionType =
+          (settings as any)?.auctionType ||
+          settings.auctionType ||
+          local?.auctionType ||
+          (code.startsWith("IPL") ? "CRICKET" : "CINEMA");
+        const remoteVersion = Number((settings as any)?.version || remoteIndex * 100 + 1);
+
+        if (local) {
+          if (mergedPlayers.length > local.players.length) {
+            local.players = mergedPlayers;
+            saveRoom(local, true, false, true);
+          }
+          if (local.currentMovieIndex > remoteIndex) {
+            return local;
+          }
+          if (local.currentMovieIndex === remoteIndex && (local.version || 0) >= remoteVersion) {
+            return local;
+          }
+        }
+
+        let finalBid = remoteRoom.current_bid;
+        let finalBidderId = remoteRoom.current_bidder_id;
+        let finalBidderName = remoteRoom.current_bidder_name;
+
+        if (local && local.currentMovieIndex === remoteIndex && local.currentBid > remoteRoom.current_bid) {
+          finalBid = local.currentBid;
+          finalBidderId = local.currentBidderId;
+          finalBidderName = local.currentBidderName;
+        }
+
+        const parsedRoom: RoomState = {
+          roomCode: remoteRoom.room_code,
+          createdAt: new Date(remoteRoom.created_at).getTime(),
+          settings,
+          hostId: remoteRoom.host_id,
+          hostName: remoteRoom.host_name,
+          status: remoteRoom.status as any,
+          players: mergedPlayers.length ? mergedPlayers : local?.players || [],
+          moviePool: (remoteRoom.movie_pool as unknown as Movie[]) || local?.moviePool || movies,
+          currentMovieIndex: remoteIndex,
+          currentBid: finalBid,
+          currentBidderId: finalBidderId,
+          currentBidderName: finalBidderName,
+          secondsRemaining: remoteRoom.seconds_remaining,
+          isSold: remoteRoom.is_sold,
+          bidHistory: mergedBids,
+          chatMessages: Array.from(chatMap.values()).sort((a, b) => a.timestamp - b.timestamp),
+          outPlayerIds: (settings as any)?.outPlayerIds || local?.outPlayerIds || [],
+          auctionType,
+          submittedSlates: (settings as any)?.submittedSlates || local?.submittedSlates || {},
+          portfolioRankings: (settings as any)?.portfolioRankings || local?.portfolioRankings,
+          isPaused: Boolean((settings as any)?.isPaused ?? local?.isPaused),
+          tournamentData: (settings as any)?.tournamentData || local?.tournamentData,
+          version: Math.max(remoteVersion, (local?.version || 1)),
+        };
+
+        saveRoom(parsedRoom, true, false, true);
+        return parsedRoom;
+      }
+    } catch {
+      // Supabase is offline or not configured
+    }
+
+    return getRoom(code);
   } catch (e) {
     console.error("fetchRemoteRoom error", e);
-    return null;
+    return getRoom(code);
   }
 }
 
-export function getOrCreateRoom(roomCode: string, playerName?: string): RoomState {
-  const existing = getRoom(roomCode);
+export function getOrCreateRoom(roomCode: string, playerName?: string): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const existing = getRoom(code);
   if (existing) {
     if (playerName) {
-      return joinRoom(roomCode, playerName);
+      try {
+        return joinRoom(code, playerName);
+      } catch {
+        return existing;
+      }
     }
     return existing;
   }
 
-  void fetchRemoteRoom(roomCode);
-
-  const user = getCurrentUser();
-  const name = playerName || user.name;
-  const newRoom = createRoom(name);
-  newRoom.roomCode = roomCode.toUpperCase();
-  saveRoom(newRoom);
-  return newRoom;
+  // Trigger background remote fetch so authoritative state arrives from server relay
+  void fetchRemoteRoom(code);
+  return null;
 }
 
 export function subscribeToMultiplayerRoom(
@@ -743,142 +1024,150 @@ export function subscribeToMultiplayerRoom(
   const handleLocalUpdate = (e: Event) => {
     const customEvent = e as CustomEvent<{ roomCode: string; room?: RoomState }>;
     if (customEvent.detail?.roomCode === code) {
-      const fresh = customEvent.detail.room || getRoom(code);
-      if (fresh) onUpdate(fresh);
+      const fresh = customEvent.detail.room;
+      if (!fresh) return;
+      const current = getRoom(code);
+      if (isPacketNewer(current, fresh)) {
+        onUpdate(fresh);
+      }
     }
   };
 
   window.addEventListener("cinebid_room_update", handleLocalUpdate);
 
-  const channelName = `cinebid_realtime_${code}`;
-  const channel = supabase.channel(channelName);
+  // 1. In-App Server Relay SSE stream
+  let eventSource: EventSource | null = null;
+  try {
+    if (typeof EventSource !== "undefined") {
+      eventSource = new EventSource(`/api/rooms/${encodeURIComponent(code)}/events`);
+      eventSource.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          const fresh = parsed.room as RoomState | undefined;
+          if (fresh && fresh.roomCode?.toUpperCase() === code) {
+            const current = getRoom(code);
+            if (isPacketNewer(current, fresh)) {
+              saveRoom(fresh, true, false, true);
+              onUpdate(fresh);
+            }
+          }
+        } catch {
+          // ignore parse errors
+        }
+      };
+    }
+  } catch {
+    // SSE not supported
+  }
 
+  // 2. Periodic sync fallback (every 1.2s to guarantee synchronization even across network drops)
+  const pollInterval = window.setInterval(() => {
+    void fetchRemoteRoom(code).then((updated) => {
+      if (updated) {
+        const current = getRoom(code);
+        if (isPacketNewer(current, updated)) {
+          saveRoom(updated, true, false, true);
+          onUpdate(updated);
+        }
+      }
+    });
+  }, 1200);
+
+  // 3. Supabase Realtime channel (if available)
+  let channel: any = null;
   let fetchDebounceTimer: number | null = null;
-  const debouncedFetchRemote = () => {
-    if (fetchDebounceTimer) window.clearTimeout(fetchDebounceTimer);
-    fetchDebounceTimer = window.setTimeout(() => {
-      void fetchRemoteRoom(code).then((updated) => {
-        if (updated) onUpdate(updated);
-      });
-    }, 350);
-  };
+  try {
+    const channelName = `cinebid_realtime_${code}`;
+    channel = supabase.channel(channelName);
 
-  channel
-    .on("broadcast", { event: "room_state" }, (payload: any) => {
-      if (payload.payload?.room?.roomCode === code) {
-        const fresh = payload.payload.room as RoomState;
-        const current = getRoom(code);
-        if (
-          current &&
-          current.currentMovieIndex === fresh.currentMovieIndex &&
-          current.currentBid > fresh.currentBid
-        ) {
-          fresh.currentBid = current.currentBid;
-          fresh.currentBidderId = current.currentBidderId;
-          fresh.currentBidderName = current.currentBidderName;
-        }
-        saveRoom(fresh, true);
-        onUpdate(fresh);
-      }
-    })
-    .on("broadcast", { event: "bid_placed" }, (payload: any) => {
-      if (payload.payload?.room?.roomCode === code) {
-        const fresh = payload.payload.room as RoomState;
-        saveRoom(fresh, true);
-        onUpdate(fresh);
-      }
-    })
-    .on("broadcast", { event: "player_out" }, (payload: any) => {
-      if (payload.payload?.room?.roomCode === code) {
-        const fresh = payload.payload.room as RoomState;
-        saveRoom(fresh, true);
-        onUpdate(fresh);
-      }
-    })
-    .on("broadcast", { event: "game_started" }, (payload: any) => {
-      if (payload.payload?.room?.roomCode === code) {
-        const fresh = payload.payload.room as RoomState;
-        saveRoom(fresh, true);
-        onUpdate(fresh);
-      }
-    })
-    .on("broadcast", { event: "round_advanced" }, (payload: any) => {
-      if (payload.payload?.room?.roomCode === code) {
-        const fresh = payload.payload.room as RoomState;
-        saveRoom(fresh, true);
-        onUpdate(fresh);
-      }
-    })
-    .on("broadcast", { event: "timer_tick" }, (payload: any) => {
-      if (payload.payload?.roomCode === code) {
-        const current = getRoom(code);
-        if (current && !current.isSold) {
-          current.secondsRemaining = payload.payload.secondsRemaining;
-          saveRoom(current, true);
-          onUpdate({ ...current });
-        }
-      }
-    })
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "rooms",
-        filter: `room_code=eq.${code}`,
-      },
-      () => {
-        debouncedFetchRemote();
-      },
-    )
-    .on(
-      "postgres_changes",
-      {
-        event: "*",
-        schema: "public",
-        table: "room_players",
-        filter: `room_code=eq.${code}`,
-      },
-      () => {
-        debouncedFetchRemote();
-      },
-    )
-    .on(
-      "postgres_changes",
-      {
-        event: "INSERT",
-        schema: "public",
-        table: "room_bids",
-        filter: `room_code=eq.${code}`,
-      },
-      () => {
-        debouncedFetchRemote();
-      },
-    )
-    .subscribe();
+    const debouncedFetchRemote = () => {
+      if (fetchDebounceTimer) window.clearTimeout(fetchDebounceTimer);
+      fetchDebounceTimer = window.setTimeout(() => {
+        void fetchRemoteRoom(code).then((updated) => {
+          if (updated) {
+            const current = getRoom(code);
+            if (isPacketNewer(current, updated)) {
+              saveRoom(updated, true, false, true);
+              onUpdate(updated);
+            }
+          }
+        });
+      }, 1500);
+    };
 
-  registerActiveChannel(code, channel);
+    const handleIncomingBroadcast = (payload: any) => {
+      const fresh = payload?.payload?.room as RoomState | undefined;
+      if (!fresh || fresh.roomCode?.toUpperCase() !== code) return;
+      const current = getRoom(code);
+      if (!isPacketNewer(current, fresh)) {
+        return;
+      }
+      saveRoom(fresh, true, false, true);
+      onUpdate(fresh);
+    };
+
+    channel
+      .on("broadcast", { event: "room_state" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "bid_placed" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "player_out" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "game_started" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "round_advanced" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "timer_update" }, handleIncomingBroadcast)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rooms", filter: `room_code=eq.${code}` },
+        debouncedFetchRemote,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "room_players", filter: `room_code=eq.${code}` },
+        debouncedFetchRemote,
+      )
+      .subscribe();
+
+    registerActiveChannel(code, channel);
+  } catch {
+    // Supabase subscription failed, SSE and polling keep game alive
+  }
 
   return () => {
+    if (eventSource) {
+      eventSource.close();
+    }
+    window.clearInterval(pollInterval);
     if (fetchDebounceTimer) window.clearTimeout(fetchDebounceTimer);
     window.removeEventListener("cinebid_room_update", handleLocalUpdate);
-    unregisterActiveChannel(code);
-    void supabase.removeChannel(channel);
+    if (channel) {
+      unregisterActiveChannel(code);
+      try {
+        void supabase.removeChannel(channel);
+      } catch {
+        // ignore
+      }
+    }
   };
 }
 
 export function joinRoom(roomCode: string, playerName: string): RoomState {
   const code = roomCode.toUpperCase();
-  let room = getRoom(code);
-  const user = setCurrentUser({ name: playerName });
+  const room = getRoom(code);
 
   if (!room) {
-    room = createRoom(playerName);
-    room.roomCode = code;
-    saveRoom(room);
-    return room;
+    throw new Error(`Room "${code}" not found. Please verify the code or check if the host has created the room.`);
   }
 
+  const currentUser = getCurrentUser();
+  let cleanName = playerName.trim() || currentUser.name || "Franchise Owner";
+  const existingNames = new Set(room.players.filter((p) => p.id !== currentUser.id).map((p) => p.name.toLowerCase()));
+  if (existingNames.has(cleanName.toLowerCase())) {
+    let counter = 2;
+    while (existingNames.has(`${cleanName} ${counter}`.toLowerCase())) {
+      counter++;
+    }
+    cleanName = `${cleanName} ${counter}`;
+  }
+
+  const user = setCurrentUser({ name: cleanName });
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
 
   if (playerIndex >= 0 && room.players[playerIndex]) {
@@ -900,25 +1189,27 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
     };
     room.players.push(newPlayer);
 
-    // Dynamically scale pool to satisfy squad/slate quota
-    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length, room.auctionType || "CINEMA");
-    if (room.moviePool.length < targetPoolSize) {
-      const extraItems = getRandomizedMovieSlate(
-        targetPoolSize,
-        room.settings.category || "ALL",
-        room.auctionType || "CINEMA",
-      );
-      const existingIds = new Set(room.moviePool.map((m) => m.id));
-      for (const item of extraItems) {
-        if (!existingIds.has(item.id)) {
-          room.moviePool.push(item);
-          existingIds.add(item.id);
+    if (room.hostId === user.id) {
+      const targetPoolSize = getRecommendedMoviePoolSize(room.players.length, room.auctionType || "CINEMA");
+      if (room.moviePool.length < targetPoolSize) {
+        const extraItems = getRandomizedMovieSlate(
+          targetPoolSize,
+          room.settings.category || "ALL",
+          room.auctionType || "CINEMA",
+        );
+        const existingIds = new Set(room.moviePool.map((m) => m.id));
+        for (const item of extraItems) {
+          if (!existingIds.has(item.id)) {
+            room.moviePool.push(item);
+            existingIds.add(item.id);
+          }
         }
+        room.settings.totalMovies = room.moviePool.length;
       }
-      room.settings.totalMovies = room.moviePool.length;
     }
   }
 
+  bumpRoomVersion(room);
   saveRoom(room);
   void broadcastRoomState(room, "room_state");
   return room;
@@ -926,30 +1217,104 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
 
 export async function joinRoomAsync(roomCode: string, playerName: string): Promise<RoomState> {
   const code = roomCode.toUpperCase();
-  const user = setCurrentUser({ name: playerName });
 
+  const currentUser = getCurrentUser();
+  const cleanName = playerName.trim() || currentUser.name || "Franchise Owner";
+  const user = setCurrentUser({ name: cleanName });
+
+  // 1. Try server relay join first
+  try {
+    const playerPayload = {
+      id: user.id,
+      name: user.name,
+      avatar: user.avatar,
+      color: user.color,
+      ready: true,
+    };
+
+    let joinedRoom: RoomState | null = null;
+    try {
+      const res = await joinRoomServerFn({ data: { roomCode: code, player: playerPayload } });
+      if (res && res.success && res.room) {
+        joinedRoom = res.room as RoomState;
+      } else if (res && !res.success && res.error) {
+        throw new Error(res.error);
+      }
+    } catch (rpcErr: any) {
+      if (rpcErr?.message && (rpcErr.message.includes("full") || rpcErr.message.includes("not found"))) {
+        throw rpcErr;
+      }
+      // Fall back to HTTP endpoint
+      const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player: playerPayload }),
+      });
+
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.success && json.room) {
+          joinedRoom = json.room as RoomState;
+        } else if (json.error) {
+          throw new Error(json.error);
+        }
+      } else if (resp.status === 400 || resp.status === 404) {
+        const json = await resp.json().catch(() => ({}));
+        if (json.error && json.error.includes("full")) {
+          throw new Error(json.error);
+        }
+      }
+    }
+
+    if (joinedRoom) {
+      saveRoom(joinedRoom, true, false, true);
+      return joinedRoom;
+    }
+  } catch (err: any) {
+    if (err?.message && (err.message.includes("full") || err.message.includes("not found"))) {
+      throw err;
+    }
+  }
+
+  // 2. Remote / local fetch
   let room = await fetchRemoteRoom(code);
   if (!room) {
     room = getRoom(code);
   }
 
+  // CRITICAL FIX: If room does not exist, throw an explicit error! NEVER create a fake movie room!
   if (!room) {
-    room = createRoom(playerName);
-    room.roomCode = code;
-    saveRoom(room);
-    return room;
+    throw new Error(`Room "${code}" not found. Please verify the code or check if the host has created the room.`);
+  }
+
+  // Check player capacity
+  const maxPlayers = room.settings?.maxPlayers || 8;
+  const isAlreadyIn = room.players.some((p) => p.id === user.id || p.name.toLowerCase() === user.name.toLowerCase());
+  if (!isAlreadyIn && room.players.length >= maxPlayers) {
+    throw new Error(`Room "${code}" is full (${maxPlayers}/${maxPlayers} players).`);
+  }
+
+  const existingNames = new Set(room.players.filter((p) => p.id !== user.id).map((p) => p.name.toLowerCase()));
+  let finalName = user.name;
+  if (existingNames.has(finalName.toLowerCase())) {
+    let counter = 2;
+    while (existingNames.has(`${finalName} ${counter}`.toLowerCase())) {
+      counter++;
+    }
+    finalName = `${finalName} ${counter}`;
+    setCurrentUser({ name: finalName });
   }
 
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
 
   if (playerIndex >= 0 && room.players[playerIndex]) {
-    room.players[playerIndex]!.name = user.name;
+    room.players[playerIndex]!.name = finalName;
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
-  } else if (room.players.length < room.settings.maxPlayers) {
+  } else if (room.players.length < maxPlayers) {
     const newPlayer: Player = {
       id: user.id,
-      name: user.name,
+      name: finalName,
       budget: room.settings.startingBudget,
       initialBudget: room.settings.startingBudget,
       movies: [],
@@ -960,27 +1325,111 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
       ready: true,
     };
     room.players.push(newPlayer);
-
-    const targetPoolSize = getRecommendedMoviePoolSize(room.players.length, room.auctionType || "CINEMA");
-    if (room.moviePool.length < targetPoolSize) {
-      const extraItems = getRandomizedMovieSlate(
-        targetPoolSize,
-        room.settings.category || "ALL",
-        room.auctionType || "CINEMA",
-      );
-      const existingIds = new Set(room.moviePool.map((m) => m.id));
-      for (const item of extraItems) {
-        if (!existingIds.has(item.id)) {
-          room.moviePool.push(item);
-          existingIds.add(item.id);
-        }
-      }
-      room.settings.totalMovies = room.moviePool.length;
-    }
   }
 
+  bumpRoomVersion(room);
   saveRoom(room);
   void broadcastRoomState(room, "room_state");
+  return room;
+}
+
+/**
+ * Official BCCI IPL Auction Bidding Increment Slabs:
+ * - Below ₹1.00 Cr: +₹10 Lakh (₹0.10 Cr)
+ * - ₹1.00 Cr to ₹5.00 Cr: +₹20 Lakh (₹0.20 Cr)
+ * - ₹5.00 Cr to ₹10.00 Cr: +₹25 Lakh (₹0.25 Cr)
+ * - Above ₹10.00 Cr: +₹50 Lakh (₹0.50 Cr)
+ */
+export function getIplBiddingSlab(currentBid: number): {
+  increment: number;
+  label: string;
+  slabName: string;
+  minNextBid: number;
+} {
+  let increment = 0.20;
+  let label = "+₹20L";
+  let slabName = "₹1 Cr – ₹5 Cr (+₹20 Lakh)";
+
+  if (currentBid < 1.00) {
+    increment = 0.10;
+    label = "+₹10L";
+    slabName = "Below ₹1 Cr (+₹10 Lakh)";
+  } else if (currentBid < 5.00) {
+    increment = 0.20;
+    label = "+₹20L";
+    slabName = "₹1 Cr – ₹5 Cr (+₹20 Lakh)";
+  } else if (currentBid < 10.00) {
+    increment = 0.25;
+    label = "+₹25L";
+    slabName = "₹5 Cr – ₹10 Cr (+₹25 Lakh)";
+  } else {
+    increment = 0.50;
+    label = "+₹50L";
+    slabName = "Above ₹10 Cr Mega War (+₹50 Lakh)";
+  }
+
+  const minNextBid = Math.round((currentBid + increment) * 100) / 100;
+  return { increment, label, slabName, minNextBid };
+}
+
+/**
+ * Returns the exact next minimum legal bid amount for IPL auction.
+ */
+export function getIplNextMinBid(
+  currentBid: number,
+  isOpeningBid: boolean,
+  basePrice: number,
+): { nextBid: number; increment: number; label: string; slabName: string } {
+  if (isOpeningBid || currentBid <= 0) {
+    return {
+      nextBid: basePrice,
+      increment: 0,
+      label: "Base Price",
+      slabName: `Opening Base Price (₹${basePrice.toFixed(2)} Cr)`,
+    };
+  }
+  const slab = getIplBiddingSlab(currentBid);
+  return {
+    nextBid: slab.minNextBid,
+    increment: slab.increment,
+    label: slab.label,
+    slabName: slab.slabName,
+  };
+}
+
+/**
+ * Host updates or extends the auction countdown timer in real-time.
+ * Can be called at any point during live bidding (e.g. set to 10s or add +10s).
+ */
+export function updateAuctionTimer(
+  roomCode: string,
+  seconds: number,
+  isExtension = false,
+): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room || room.status !== "AUCTION") return null;
+
+  const newSeconds = isExtension
+    ? Math.max(3, (room.secondsRemaining || 0) + seconds)
+    : Math.max(3, seconds);
+
+  room.secondsRemaining = newSeconds;
+  if (room.settings) {
+    room.settings.auctionSeconds = newSeconds;
+  }
+  if (!room.isPaused) {
+    room.auctionEndTime = Date.now() + newSeconds * 1000;
+  } else {
+    room.auctionEndTime = undefined;
+  }
+
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
+  void broadcastRoomState(room, "timer_update", {
+    secondsRemaining: newSeconds,
+    auctionEndTime: room.auctionEndTime,
+  });
   return room;
 }
 
@@ -1008,6 +1457,8 @@ export function placeBid(
   const currentMovie = room.moviePool[room.currentMovieIndex] || movies[0];
   const isCricket = room.auctionType === "CRICKET" || Boolean(currentMovie?.role);
 
+  if (!player.movies) player.movies = [];
+
   // IPL Rule 1: Maximum 18 players in squad
   if (isCricket && player.movies.length >= 18) {
     return {
@@ -1027,11 +1478,34 @@ export function placeBid(
     }
   }
 
-  const newBid = isAbsolute ? amountOrIncrement : room.currentBid + amountOrIncrement;
+  let newBid = isAbsolute ? amountOrIncrement : room.currentBid + amountOrIncrement;
+  newBid = Math.round(newBid * 100) / 100;
 
-  if (newBid <= room.currentBid && room.currentBidderId !== null) {
-    return { success: false, message: "Bid must be higher than current bid." };
+  if (isCricket) {
+    const baseP = currentMovie?.basePrice ?? 1;
+    if (room.currentBidderId === null) {
+      if (newBid < baseP) {
+        return {
+          success: false,
+          message: `Opening bid cannot be lower than player's base price of ${formatCr(baseP)}.`,
+        };
+      }
+    } else {
+      const slab = getIplBiddingSlab(room.currentBid);
+      const minAllowed = Math.round((room.currentBid + slab.increment) * 100) / 100;
+      if (newBid < minAllowed - 0.001) {
+        return {
+          success: false,
+          message: `IPL Bid Increment: Must be at least ${slab.label} (Min next bid: ${formatCr(minAllowed)}).`,
+        };
+      }
+    }
+  } else {
+    if (newBid <= room.currentBid && room.currentBidderId !== null) {
+      return { success: false, message: "Bid must be higher than current bid." };
+    }
   }
+
   if (newBid > player.budget) {
     return {
       success: false,
@@ -1066,7 +1540,8 @@ export function placeBid(
   };
 
   room.bidHistory.unshift(bidRecord);
-  saveRoom(room);
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
 
   try {
     void supabase.from("room_bids").insert({
@@ -1120,7 +1595,8 @@ export function playerPassOrOut(
     return { success: true, room: resolved || room, isResolved: true };
   }
 
-  saveRoom(room);
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
   void broadcastRoomState(room, "player_out", { playerId });
   return { success: true, room, isResolved: false };
 }
@@ -1153,10 +1629,13 @@ export function simulateBotBid(
   const bot = eligibleBots[Math.floor(Math.random() * eligibleBots.length)];
   if (!bot) return { didBid: false };
 
+  if (!bot.movies) bot.movies = [];
+
   // Constraint 1: Squad max 18 players
   if (isCricket && bot.movies.length >= 18) {
     if (!room.outPlayerIds.includes(bot.id)) {
       room.outPlayerIds.push(bot.id);
+      bumpRoomVersion(room);
       saveRoom(room);
     }
     return { didBid: false };
@@ -1168,6 +1647,7 @@ export function simulateBotBid(
     if (botOverseasCount >= 7) {
       if (!room.outPlayerIds.includes(bot.id)) {
         room.outPlayerIds.push(bot.id);
+        bumpRoomVersion(room);
         saveRoom(room);
       }
       return { didBid: false };
@@ -1180,9 +1660,13 @@ export function simulateBotBid(
   );
 
   // If current price exceeds bot willingness or bot cannot afford next bid: bot marks OUT
-  if (room.currentBid >= maxWillingness || bot.budget < room.currentBid + 1) {
+  const slab = isCricket ? getIplBiddingSlab(room.currentBid) : { increment: 1 };
+  const minRequired = room.currentBidderId === null ? currentMovie.basePrice : room.currentBid + slab.increment;
+
+  if (room.currentBid >= maxWillingness || bot.budget < minRequired) {
     if (!room.outPlayerIds.includes(bot.id)) {
       room.outPlayerIds.push(bot.id);
+      bumpRoomVersion(room);
       saveRoom(room);
     }
 
@@ -1195,9 +1679,19 @@ export function simulateBotBid(
   }
 
   // Bot places a bid
-  if (room.currentBid < maxWillingness && bot.budget >= room.currentBid + 1) {
-    const increment = Math.random() > 0.65 ? 2 : 1;
-    const bidVal = Math.min(room.currentBid + increment, bot.budget);
+  if (room.currentBid < maxWillingness && bot.budget >= minRequired) {
+    let bidVal: number;
+    if (isCricket) {
+      if (room.currentBidderId === null) {
+        bidVal = currentMovie.basePrice;
+      } else {
+        bidVal = Math.round((room.currentBid + slab.increment) * 100) / 100;
+      }
+    } else {
+      const increment = Math.random() > 0.65 ? 2 : 1;
+      bidVal = Math.min(room.currentBid + increment, bot.budget);
+    }
+    bidVal = Math.min(bidVal, bot.budget);
 
     const result = placeBid(room.roomCode, bot.id, bidVal, true);
     if (result.success && result.room) {
@@ -1212,6 +1706,7 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
   const code = roomCode.toUpperCase();
   const room = getRoom(code);
   if (!room) return null;
+  if (room.isSold) return room;
 
   const currentMovie = room.moviePool[room.currentMovieIndex];
   if (!currentMovie) return room;
@@ -1219,20 +1714,62 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
   if (room.currentBidderId) {
     const winner = room.players.find((p) => p.id === room.currentBidderId);
     if (winner) {
-      winner.budget -= room.currentBid;
-      const wonMovie: OwnedMovie = {
-        ...currentMovie,
-        purchasePrice: room.currentBid,
-        purchasedBy: winner.id,
-        purchasedByName: winner.name,
-      };
-      winner.movies.push(wonMovie);
+      if (!winner.movies) winner.movies = [];
+      // Idempotency check: prevent duplicate acquisition or double deduction
+      const alreadyWon = winner.movies.some((m) => m.id === currentMovie.id);
+      if (!alreadyWon) {
+        winner.budget -= room.currentBid;
+        const wonMovie: OwnedMovie = {
+          ...currentMovie,
+          purchasePrice: room.currentBid,
+          purchasedBy: winner.id,
+          purchasedByName: winner.name,
+        };
+        winner.movies.push(wonMovie);
+      }
     }
   }
 
+  bumpRoomVersion(room);
   room.isSold = true;
+  room.isPaused = false;
   room.auctionEndTime = undefined;
-  saveRoom(room);
+  saveRoom(room, false, false, false, true);
+  void broadcastRoomState(room, "room_state");
+  return room;
+}
+
+export function togglePauseAuction(roomCode: string): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room || room.status !== "AUCTION" || room.isSold) return null;
+
+  if (room.isPaused) {
+    room.isPaused = false;
+    const remainingSec = Math.max(1, room.secondsRemaining || 30);
+    room.auctionEndTime = Date.now() + remainingSec * 1000;
+  } else {
+    room.isPaused = true;
+    if (room.auctionEndTime) {
+      const remainingMs = Math.max(0, room.auctionEndTime - Date.now());
+      room.secondsRemaining = Math.max(1, Math.ceil(remainingMs / 1000));
+    }
+    room.auctionEndTime = undefined;
+  }
+
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
+  void broadcastRoomState(room, "room_state");
+  return room;
+}
+
+export function saveTournamentState(roomCode: string, tournamentData: any): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return null;
+  room.tournamentData = tournamentData;
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
   void broadcastRoomState(room, "room_state");
   return room;
 }
@@ -1248,6 +1785,7 @@ export function advanceToNextMovie(roomCode: string): RoomState | null {
   if (nextIndex >= maxRounds) {
     room.status = "TOP_FIVE";
     room.auctionEndTime = undefined;
+    bumpRoomVersion(room);
     saveRoom(room);
     void broadcastRoomState(room, "room_state");
     return room;
@@ -1264,7 +1802,9 @@ export function advanceToNextMovie(roomCode: string): RoomState | null {
   room.bidHistory = [];
   room.outPlayerIds = []; // Reset "OUT" statuses for new item
 
-  saveRoom(room);
+  bumpRoomVersion(room);
+  saveRoom(room, false, false, false, true);
+  void broadcastRoomState(room, "round_advanced", { nextIndex });
   return room;
 }
 
@@ -1310,7 +1850,7 @@ export function submitPlayerSlate(
   room.settings.submittedSlates = room.submittedSlates;
 
   // Check if all human players with won items have submitted
-  const activeHumans = room.players.filter((p) => !p.isBot && p.movies.length > 0);
+  const activeHumans = room.players.filter((p) => !p.isBot && (p.movies || []).length > 0);
   const allSubmitted =
     activeHumans.length === 0 ||
     activeHumans.every((p) => Boolean(room.submittedSlates?.[p.id]?.movieIds?.length));
@@ -1384,16 +1924,17 @@ export async function evaluateAllRoomPlayers(
 
   const isCricket =
     room.auctionType === "CRICKET" ||
-    room.players.some((p) => p.movies.some((m) => m.auctionType === "CRICKET" || m.role));
+    room.players.some((p) => (p.movies || []).some((m) => m.auctionType === "CRICKET" || m.role));
 
   // 3. For any bots or players who did not submit in time, calculate their optimal slate
   room.players.forEach((p) => {
     if (!userMap[p.id] || userMap[p.id]!.length === 0) {
+      const pMovies = p.movies || [];
       if (isCricket) {
-        const optimal = getOptimalPlaying11(p.movies);
+        const optimal = getOptimalPlaying11(pMovies);
         userMap[p.id] = optimal.playing11;
       } else {
-        userMap[p.id] = getOptimalMovieSlate(p.movies);
+        userMap[p.id] = getOptimalMovieSlate(pMovies);
       }
     }
   });

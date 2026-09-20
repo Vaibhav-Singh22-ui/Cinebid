@@ -53,14 +53,14 @@ export type AuctionItem = Movie;
 
 export interface OwnedMovie extends Movie {
   purchasePrice: number;
-  purchasedBy?: string;
-  purchasedByName?: string;
+  purchasedBy?: string | undefined;
+  purchasedByName?: string | undefined;
 }
 
 export interface SubmittedSlate {
   movieIds: string[];
-  captainId?: string;
-  viceCaptainId?: string;
+  captainId?: string | undefined;
+  viceCaptainId?: string | undefined;
   submittedAt: number;
 }
 

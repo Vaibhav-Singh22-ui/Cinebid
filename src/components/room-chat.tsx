@@ -22,7 +22,20 @@ export interface DisplayMessage {
   isSystem?: boolean;
 }
 
-const QUICK_EMOJIS = ["🔥", "👏", "🏏", "💸", "🏆", "⚡", "🎯", "👑"];
+const QUICK_EMOJIS = ["🔥", "👏", "🏏", "💸", "🏆", "⚡", "🎯", "👑", "🚀", "😂", "👀", "🥶"];
+
+export const REACTION_GIFS = [
+  { label: "💸 Money Rain", url: "https://media.giphy.com/media/LdOyjZ7io5M88/giphy.gif" },
+  { label: "🔨 SOLD!", url: "https://media.giphy.com/media/l41YkxvU8c7J7Bba0/giphy.gif" },
+  { label: "🍿 Popcorn Drama", url: "https://media.giphy.com/media/gl0mkIZOW6Nwc/giphy.gif" },
+  { label: "💰 Take My Money", url: "https://media.giphy.com/media/sDcfxFDozb3bO/giphy.gif" },
+  { label: "🍳 Let Him Cook", url: "https://media.giphy.com/media/M6ONx0ldSEHsTEn8VX/giphy.gif" },
+  { label: "🤯 Mind Blown", url: "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif" },
+  { label: "🕺 Victory Dance", url: "https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif" },
+  { label: "😂 Laughing", url: "https://media.giphy.com/media/10JhviFuU2gWD6/giphy.gif" },
+  { label: "🤦 Facepalm", url: "https://media.giphy.com/media/WrNfErAnGV7mM/giphy.gif" },
+  { label: "🏏 Maximum Six", url: "https://media.giphy.com/media/3o7bu12GHm4G5MI7UW/giphy.gif" },
+];
 
 const QUICK_TAUNTS = [
   "🔥 All in!",
@@ -49,13 +62,15 @@ function getSenderPalette(name: string) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
   const index = Math.abs(hash) % AVATAR_PALETTES.length;
-  return AVATAR_PALETTES[index];
+  return AVATAR_PALETTES[index] || AVATAR_PALETTES[0]!;
 }
 
 function getInitials(name: string): string {
   const parts = name.trim().split(" ");
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[1][0]).toUpperCase();
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    const first = parts[0][0] || "";
+    const second = parts[1][0] || "";
+    return (first + second).toUpperCase();
   }
   return name.slice(0, 2).toUpperCase();
 }
@@ -116,6 +131,7 @@ export function RoomChat({
   const [sending, setSending] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [showEmojis, setShowEmojis] = useState(false);
+  const [showGifs, setShowGifs] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -509,9 +525,29 @@ export function RoomChat({
                         </div>
                       )}
 
-                      <p className="leading-relaxed text-xs text-cream/95 whitespace-pre-wrap selection:bg-gold/30">
-                        {m.body}
-                      </p>
+                      {m.body.startsWith("[GIF]") ? (
+                        <div className="mt-1 rounded-xl overflow-hidden border border-gold/30 shadow-md max-w-[200px]">
+                          <img
+                            src={m.body.replace("[GIF]", "")}
+                            alt="Reaction GIF"
+                            className="max-h-36 w-full rounded-lg object-contain bg-black/50"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : m.body.match(/^https?:\/\/.*\.(gif|webp|png|jpg|jpeg)$/i) ? (
+                        <div className="mt-1 rounded-xl overflow-hidden border border-gold/30 shadow-md max-w-[200px]">
+                          <img
+                            src={m.body}
+                            alt="Reaction GIF"
+                            className="max-h-36 w-full rounded-lg object-contain bg-black/50"
+                            loading="lazy"
+                          />
+                        </div>
+                      ) : (
+                        <p className="leading-relaxed text-xs text-cream/95 whitespace-pre-wrap selection:bg-gold/30">
+                          {m.body}
+                        </p>
+                      )}
 
                       {/* Small inline time for consecutive messages */}
                       {isConsecutive && (
@@ -547,7 +583,7 @@ export function RoomChat({
         )}
       </div>
 
-      {/* Footer Controls: Quick Banter Chips, Emojis, Compose Bar */}
+      {/* Footer Controls: Quick Banter Chips, Emojis, GIFs, Compose Bar */}
       <div className="border-t border-border/70 p-2.5 bg-black/35 flex flex-col gap-2 flex-shrink-0">
         {/* Quick Banter Chips (Horizontal scroll) */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none no-scrollbar">
@@ -583,11 +619,41 @@ export function RoomChat({
           </div>
         )}
 
+        {/* GIF Selector Tray (Collapsible / Toggleable) */}
+        {showGifs && (
+          <div className="grid grid-cols-5 gap-1.5 pt-1.5 border-t border-border/40 max-h-36 overflow-y-auto pr-1">
+            {REACTION_GIFS.map((gif) => (
+              <button
+                key={gif.label}
+                type="button"
+                onClick={() => {
+                  void handleSendMessage(`[GIF]${gif.url}`);
+                  setShowGifs(false);
+                }}
+                className="flex flex-col items-center gap-1 p-1 rounded-xl bg-black/50 border border-border/70 hover:border-gold/60 hover:bg-gold/10 transition-all text-center group cursor-pointer"
+              >
+                <img
+                  src={gif.url}
+                  alt={gif.label}
+                  className="w-full h-12 rounded-lg object-cover group-hover:scale-105 transition-transform"
+                  loading="lazy"
+                />
+                <span className="text-[9px] font-bold text-cream truncate w-full">
+                  {gif.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Input Form */}
         <form onSubmit={onSubmit} className="flex items-center gap-1.5 relative">
           <button
             type="button"
-            onClick={() => setShowEmojis((prev) => !prev)}
+            onClick={() => {
+              setShowEmojis((prev) => !prev);
+              setShowGifs(false);
+            }}
             className={`p-2 rounded-xl border transition-colors flex-shrink-0 cursor-pointer ${
               showEmojis
                 ? "bg-gold/20 border-gold/40 text-gold"
@@ -598,13 +664,29 @@ export function RoomChat({
             <Smile size={14} />
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              setShowGifs((prev) => !prev);
+              setShowEmojis(false);
+            }}
+            className={`px-2 py-1.5 rounded-xl border text-[11px] font-black tracking-wider transition-colors flex-shrink-0 cursor-pointer ${
+              showGifs
+                ? "bg-gold/20 border-gold/40 text-gold"
+                : "bg-black/50 border-border/80 text-muted-foreground hover:text-cream"
+            }`}
+            title="Toggle Reaction GIFs"
+          >
+            GIF
+          </button>
+
           <div className="relative flex-1 min-w-0">
             <input
               ref={inputRef}
               type="text"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              placeholder="Type a war-room taunt..."
+              placeholder="Type a war-room taunt or paste image/GIF URL..."
               maxLength={180}
               className="w-full bg-black/60 border border-border/80 rounded-xl pl-3 pr-12 py-2 text-xs text-cream outline-none focus:border-gold focus:ring-1 focus:ring-gold placeholder:text-muted-foreground/60 transition-all"
             />

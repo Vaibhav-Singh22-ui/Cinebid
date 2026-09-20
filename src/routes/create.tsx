@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { GameForm } from "@/components/game-screens";
 export const Route = createFileRoute("/create")({
   validateSearch: (search: Record<string, unknown>) => ({
-    game: typeof search.game === "string" ? search.game : "cinema",
+    game: typeof search["game"] === "string" ? search["game"] : "cinema",
   }),
   head: () => ({
     meta: [

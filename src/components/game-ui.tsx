@@ -2,22 +2,31 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
   Award,
+  BookOpen,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Clock,
   Crown,
   Film,
   Flame,
   Gavel,
+  ListFilter,
   LoaderCircle,
   Medal,
+  Pause,
   Play,
   RotateCcw,
+  Search,
   Shield,
   Sparkles,
   Star,
   Timer,
   Trophy,
   Users,
+  Volume2,
+  VolumeX,
+  XCircle,
   Zap,
 } from "lucide-react";
 import {
@@ -30,6 +39,13 @@ import { getCurrentUser, type PlayerScore } from "@/lib/game-manager";
 import { getOfficialPosterUrl } from "@/lib/movie-posters";
 import { CRICKETER_PORTRAIT_SEEDS, getRealCricketerPhoto, getSafeCdnPhotoUrl } from "@/lib/cricket-portraits";
 import { isOverseasPlayer } from "@/lib/cricket-data";
+import { isAudioMuted, toggleAudioMute } from "@/lib/sound-effects";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import posterSheet from "@/assets/movie-posters.jpg";
 import cinebidLogo from "@/assets/cinebid-logo.jpg";
 
@@ -87,42 +103,54 @@ export function getRoleBadge(role?: string, genre?: string) {
   const r = (role || genre || "").toUpperCase();
   if (r.includes("WICKETKEEPER") || r.includes("KEEPER")) {
     return {
-      label: "🧤 WICKETKEEPER",
-      colorClass: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+      label: "WK-BAT",
+      fullLabel: "Wicketkeeper",
+      icon: "🧤",
+      colorClass: "bg-amber-500/15 text-amber-300 border-amber-500/30",
       category: "BATSMAN",
     };
   }
   if (r.includes("BATTER") || r.includes("BATSMAN") || r.includes("OPENER")) {
     return {
-      label: "🏏 BATSMAN",
-      colorClass: "bg-blue-500/20 text-blue-300 border-blue-500/40",
+      label: "BATSMAN",
+      fullLabel: "Batsman",
+      icon: "🏏",
+      colorClass: "bg-blue-500/15 text-blue-300 border-blue-500/30",
       category: "BATSMAN",
     };
   }
   if (r.includes("ALL_ROUNDER") || r.includes("ALL-ROUNDER") || r.includes("ALLROUNDER")) {
     return {
-      label: "⚡ ALL-ROUNDER",
-      colorClass: "bg-purple-500/20 text-purple-300 border-purple-500/40",
+      label: "ALL-ROUNDER",
+      fullLabel: "All-Rounder",
+      icon: "⚡",
+      colorClass: "bg-purple-500/15 text-purple-300 border-purple-500/30",
       category: "ALL_ROUNDER",
     };
   }
   if (r.includes("FAST_BOWLER") || r.includes("PACER") || r.includes("SEAM")) {
     return {
-      label: "🎯 FAST BOWLER",
-      colorClass: "bg-rose-500/20 text-rose-300 border-rose-500/40",
+      label: "FAST BOWLER",
+      fullLabel: "Fast Bowler",
+      icon: "🎯",
+      colorClass: "bg-rose-500/15 text-rose-300 border-rose-500/30",
       category: "BOWLER",
     };
   }
   if (r.includes("SPIN_BOWLER") || r.includes("SPINNER") || r.includes("WRIST")) {
     return {
-      label: "🌀 SPIN BOWLER",
-      colorClass: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
+      label: "SPIN BOWLER",
+      fullLabel: "Spin Bowler",
+      icon: "🌀",
+      colorClass: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
       category: "BOWLER",
     };
   }
   return {
-    label: "🏏 PLAYER",
-    colorClass: "bg-gold/20 text-gold border-gold/40",
+    label: "PLAYER",
+    fullLabel: "Player",
+    icon: "🏏",
+    colorClass: "bg-gold/15 text-gold border-gold/30",
     category: "BATSMAN",
   };
 }
@@ -159,7 +187,7 @@ export function Poster({ movie, className }: { movie: Movie | OwnedMovie; classN
         });
       }
     } else {
-      setPhotoSrc(getOfficialPosterUrl(movie.id));
+      setPhotoSrc(getOfficialPosterUrl(movie.id) || "");
     }
     return () => {
       isMounted = false;
@@ -187,7 +215,7 @@ export function Poster({ movie, className }: { movie: Movie | OwnedMovie; classN
 
   if (isCricket) {
     return (
-      <div className={`poster overflow-hidden rounded-2xl relative bg-gradient-to-b from-slate-900 via-panel to-black border border-border/80 shadow-xl ${className || ""}`}>
+      <div className={`poster overflow-hidden rounded-2xl relative bg-gradient-to-b from-slate-900 via-panel to-black border border-border/80 shadow-xl group ${className || ""}`}>
         {photoSrc && !imgError ? (
           <img
             src={photoSrc}
@@ -199,32 +227,38 @@ export function Poster({ movie, className }: { movie: Movie | OwnedMovie; classN
             onError={handleImageError}
           />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-gradient-to-br from-blue-950/70 via-panel to-black select-none">
-            <div className="text-4xl sm:text-5xl mb-2">{movie.countryFlag || "🏏"}</div>
-            <strong className="text-sm sm:text-base font-black text-cream block truncate w-full">{movie.title}</strong>
-            <span className="text-[10px] text-gold font-bold uppercase tracking-wider mt-1">{movie.genre}</span>
-            <span className="text-[9px] text-cyan-300 mt-1 font-semibold">★ Rating: {movie.imdbRating || 9.2}</span>
+          <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-black select-none border border-gold/30 rounded-2xl relative overflow-hidden shadow-2xl">
+            {/* Subtle atmospheric ambient glow */}
+            <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-36 h-36 bg-gold/10 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute inset-0 bg-[radial-gradient(#ffffff08_1px,transparent_1px)] [background-size:14px_14px] opacity-30 pointer-events-none" />
+
+            {/* Clean Monogram Crest */}
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-black/60 border border-gold/40 flex flex-col items-center justify-center shadow-lg mb-2.5 relative z-10 backdrop-blur-sm">
+              <span className="text-xl sm:text-2xl font-black text-gold font-display tracking-wider leading-none">
+                {movie.title
+                  .split(" ")
+                  .map((w) => w[0])
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase()}
+              </span>
+            </div>
+
+            {/* Clean Player Name */}
+            <h3 className="text-sm sm:text-base font-black text-cream font-display uppercase tracking-wide leading-snug max-w-[90%] relative z-10">
+              {movie.title}
+            </h3>
+
+            {/* Subtle category line */}
+            <div className="flex items-center gap-1.5 mt-2 text-[10px] text-muted-foreground relative z-10">
+              <span className="text-cream/80 font-semibold">{roleBadge.fullLabel || roleBadge.label}</span>
+              <span>•</span>
+              <span className="text-gold/90 font-mono font-semibold">
+                {isOverseas ? (movie.country || "Overseas") : "India"}
+              </span>
+            </div>
           </div>
         )}
-
-        {/* Top Badges: Country + Role */}
-        <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-1.5 pointer-events-none">
-          <span
-            className={`px-2 py-0.5 rounded-lg border text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-md ${
-              isOverseas
-                ? "bg-amber-950/85 border-amber-500/50 text-amber-300"
-                : "bg-blue-950/85 border-blue-500/50 text-blue-300"
-            }`}
-          >
-            {isOverseas ? `✈️ ${movie.country || "Overseas"}` : `🇮🇳 India`}
-          </span>
-
-          <span
-            className={`px-2 py-0.5 rounded-lg border text-[10px] font-black uppercase tracking-wider backdrop-blur-md shadow-md ${roleBadge.colorClass}`}
-          >
-            {roleBadge.label}
-          </span>
-        </div>
       </div>
     );
   }
@@ -320,17 +354,11 @@ export function MovieCard({
         <div>
           {isCricket ? (
             <div className="flex items-center gap-1.5 flex-wrap mb-1">
-              <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${roleBadge.colorClass}`}>
-                {roleBadge.label}
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md border ${roleBadge.colorClass}`}>
+                {roleBadge.icon} {roleBadge.label}
               </span>
-              <span
-                className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${
-                  isOverseas
-                    ? "bg-amber-950/60 border-amber-500/30 text-amber-300"
-                    : "bg-blue-950/60 border-blue-500/30 text-blue-300"
-                }`}
-              >
-                {isOverseas ? "✈️ Overseas" : "🇮🇳 Indian"}
+              <span className="text-[10px] text-muted-foreground font-semibold">
+                {isOverseas ? "✈️ Overseas" : "🇮🇳 India"}
               </span>
             </div>
           ) : (
@@ -406,8 +434,9 @@ export function PlayerCard({
   isOut?: boolean;
   isCricket?: boolean;
 }) {
-  const wonCount = player.movies.length;
-  const overseasCount = isCricket ? player.movies.filter((m) => isOverseasPlayer(m)).length : 0;
+  const playerMovies = player.movies || [];
+  const wonCount = playerMovies.length;
+  const overseasCount = isCricket ? playerMovies.filter((m) => isOverseasPlayer(m)).length : 0;
   const isSquadReady = isCricket ? wonCount >= 12 : wonCount >= 5;
   const isSquadFull = isCricket ? wonCount >= 18 : wonCount >= 10;
 
@@ -742,15 +771,16 @@ export function RankingList({
 
   const fallbackPlayers = players || [];
   const ranked = [...fallbackPlayers].sort(
-    (a, b) => b.movies.length - a.movies.length || b.budget - a.budget,
+    (a, b) => (b.movies || []).length - (a.movies || []).length || b.budget - a.budget,
   );
 
   return (
     <div className="w-full flex flex-col gap-3 mt-6">
       {ranked.map((player, index) => {
+        const count = (player.movies || []).length;
         const estimatedScore = Math.min(
           99,
-          Math.max(50, 70 + player.movies.length * 5 + (player.budget / player.initialBudget) * 10),
+          Math.max(50, 70 + count * 5 + (player.budget / player.initialBudget) * 10),
         );
         const rating = getStarRating(estimatedScore);
 
@@ -770,7 +800,7 @@ export function RankingList({
                 <strong className="text-cream font-bold text-base">{player.name}</strong>
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
                   <span>{rating.stars}</span>
-                  <span>• {player.movies.length} items acquired</span>
+                  <span>• {count} items acquired</span>
                 </div>
               </div>
             </div>
@@ -788,12 +818,15 @@ export function AuctionTimer({
   seconds = 30,
   endTime,
   onTimerEnd,
+  isPaused,
 }: {
   seconds?: number | undefined;
   endTime?: number | undefined;
   onTimerEnd?: () => void;
+  isPaused?: boolean | undefined;
 }) {
   const [displaySec, setDisplaySec] = useState<number>(() => {
+    if (isPaused) return seconds;
     if (endTime) return Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
     return seconds;
   });
@@ -805,6 +838,11 @@ export function AuctionTimer({
   }, [endTime]);
 
   useEffect(() => {
+    if (isPaused) {
+      setDisplaySec(seconds);
+      return;
+    }
+
     const target = endTime || Date.now() + seconds * 1000;
 
     const tick = () => {
@@ -820,23 +858,29 @@ export function AuctionTimer({
     tick();
     const interval = setInterval(tick, 100);
     return () => clearInterval(interval);
-  }, [endTime, seconds, onTimerEnd]);
+  }, [endTime, seconds, onTimerEnd, isPaused]);
 
   const mins = Math.floor(displaySec / 60);
   const secs = displaySec % 60;
-  const isUrgent = displaySec <= 7;
+  const isUrgent = displaySec <= 7 && !isPaused;
 
   return (
     <div
       className={`auction-timer flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl border transition-all ${
-        isUrgent
-          ? "bg-red-950/60 border-red-500 text-red-400 ring-4 ring-red-500/30 animate-pulse shadow-lg shadow-red-950/50"
-          : "bg-panel/90 border-gold/40 text-gold shadow-lg shadow-gold/5"
+        isPaused
+          ? "bg-amber-950/70 border-amber-500 text-amber-300 ring-4 ring-amber-500/20 shadow-lg shadow-amber-950/50"
+          : isUrgent
+            ? "bg-red-950/60 border-red-500 text-red-400 ring-4 ring-red-500/30 animate-pulse shadow-lg shadow-red-950/50"
+            : "bg-panel/90 border-gold/40 text-gold shadow-lg shadow-gold/5"
       }`}
     >
-      <Timer size={20} className={isUrgent ? "text-red-400 animate-spin" : "text-gold"} />
+      {isPaused ? (
+        <Pause size={20} className="text-amber-400 animate-pulse" />
+      ) : (
+        <Timer size={20} className={isUrgent ? "text-red-400 animate-spin" : "text-gold"} />
+      )}
       <span className="tabular-nums font-mono font-black text-2xl sm:text-3xl tracking-wider">
-        {String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}
+        {isPaused ? "PAUSED" : `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`}
       </span>
     </div>
   );
@@ -851,4 +895,736 @@ export function EmptyMovieSlot() {
   );
 }
 
+/**
+ * Top header navigation bar with popup tabs:
+ * [Rules] [Sold] [Unsold] [Upcoming] [All Players / Catalogue] [Sound Mute] [Host Pause]
+ */
+export function AuctionTopTabs({
+  moviePool,
+  players,
+  currentMovieIndex = 0,
+  auctionType = "CRICKET",
+  roomCode,
+  isPaused,
+  onTogglePause,
+  isHost,
+  onUpdateTimer,
+}: {
+  moviePool: Movie[];
+  players: Player[];
+  currentMovieIndex?: number | undefined;
+  auctionType?: "CINEMA" | "CRICKET" | undefined;
+  roomCode?: string | undefined;
+  isPaused?: boolean | undefined;
+  onTogglePause?: (() => void) | undefined;
+  isHost?: boolean | undefined;
+  onUpdateTimer?: ((seconds: number, isExtension?: boolean | undefined) => void) | undefined;
+}) {
+  const isCricket = auctionType === "CRICKET";
+  const [activeTab, setActiveTab] = useState<"RULES" | "SOLD" | "UNSOLD" | "UPCOMING" | "ALL" | "TIMER" | "SQUADS" | null>(null);
+  const [selectedSquadPlayerId, setSelectedSquadPlayerId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("ALL");
+  const [muted, setMuted] = useState(isAudioMuted());
+  const [customSecInput, setCustomSecInput] = useState("10");
+
+  const handleToggleMute = () => {
+    const next = toggleAudioMute();
+    setMuted(next);
+  };
+
+  // Compile Sold items map
+  const soldMap = new Map<string, { movie: OwnedMovie; buyerName: string; price: number }>();
+  for (const p of (players || [])) {
+    for (const m of (p.movies || [])) {
+      soldMap.set(m.id, {
+        movie: m,
+        buyerName: p.name,
+        price: m.purchasePrice || m.basePrice,
+      });
+    }
+  }
+  const soldList = Array.from(soldMap.values());
+
+  // Compile Unsold items (items before current index that were passed)
+  const unsoldList = moviePool
+    .slice(0, currentMovieIndex)
+    .filter((m) => !soldMap.has(m.id));
+
+  // Upcoming items
+  const upcomingList = moviePool.slice(currentMovieIndex + 1);
+
+  // Filter helper for modal list
+  const filterItem = (m: Movie | OwnedMovie) => {
+    const titleMatch = m.title.toLowerCase().includes(searchQuery.toLowerCase().trim());
+    if (!titleMatch) return false;
+
+    if (roleFilter === "ALL") return true;
+    if (roleFilter === "INDIAN") return !isOverseasPlayer(m);
+    if (roleFilter === "OVERSEAS") return isOverseasPlayer(m);
+    if (roleFilter === "BATSMAN") return m.role?.includes("Batsman");
+    if (roleFilter === "BOWLER") return m.role?.includes("Bowler");
+    if (roleFilter === "ALL_ROUNDER") return m.role?.includes("All-Rounder");
+    if (roleFilter === "WICKETKEEPER") return m.role?.includes("Wicketkeeper");
+    return true;
+  };
+
+  return (
+    <>
+      <nav className="w-full bg-panel/90 border-b border-border/80 px-4 sm:px-6 py-2 flex items-center justify-between gap-2 overflow-x-auto scrollbar-none z-30 shadow-md">
+        <div className="flex items-center gap-1.5 sm:gap-2 flex-nowrap min-w-max">
+          <button
+            type="button"
+            onClick={() => setActiveTab("RULES")}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "RULES"
+                ? "bg-gold text-black border-gold shadow-md"
+                : "bg-black/40 border-border/80 text-cream/90 hover:border-gold/50 hover:bg-gold/10"
+            }`}
+          >
+            <BookOpen size={13} />
+            <span>Rules</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("SOLD")}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "SOLD"
+                ? "bg-emerald-500 text-black border-emerald-400 shadow-md"
+                : "bg-black/40 border-border/80 text-cream/90 hover:border-emerald-500/50 hover:bg-emerald-500/10"
+            }`}
+          >
+            <Gavel size={13} className="text-emerald-400" />
+            <span>Sold</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-emerald-950 text-emerald-300 text-[10px] font-mono font-black border border-emerald-500/40">
+              {soldList.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("UNSOLD")}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "UNSOLD"
+                ? "bg-red-500 text-white border-red-400 shadow-md"
+                : "bg-black/40 border-border/80 text-cream/90 hover:border-red-500/50 hover:bg-red-500/10"
+            }`}
+          >
+            <XCircle size={13} className="text-red-400" />
+            <span>Unsold</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-red-950 text-red-300 text-[10px] font-mono font-black border border-red-500/40">
+              {unsoldList.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("UPCOMING")}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "UPCOMING"
+                ? "bg-cyan-500 text-black border-cyan-400 shadow-md"
+                : "bg-black/40 border-border/80 text-cream/90 hover:border-cyan-500/50 hover:bg-cyan-500/10"
+            }`}
+          >
+            <Clock size={13} className="text-cyan-400" />
+            <span>Upcoming</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-cyan-950 text-cyan-300 text-[10px] font-mono font-black border border-cyan-500/40">
+              {upcomingList.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("ALL")}
+            className={`px-3.5 py-1.5 rounded-xl border text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "ALL"
+                ? "bg-gold text-black border-gold shadow-md"
+                : "bg-gold/15 border-gold/40 text-gold hover:bg-gold/25"
+            }`}
+          >
+            <ListFilter size={13} />
+            <span>{isCricket ? "All 58 Players" : "All Films"}</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-black/60 text-gold text-[10px] font-mono font-black border border-gold/30">
+              {moviePool.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!selectedSquadPlayerId && players[0]) setSelectedSquadPlayerId(players[0].id);
+              setActiveTab("SQUADS");
+            }}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === "SQUADS"
+                ? "bg-gold text-black border-gold shadow-md font-black"
+                : "bg-black/40 border-border/80 text-cream/90 hover:border-gold/50 hover:bg-gold/10"
+            }`}
+            title="Inspect every franchise roster, purchases, and purse remaining"
+          >
+            <Users size={13} className="text-gold" />
+            <span>{isCricket ? "Squads" : "Slates"}</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-gold/20 text-gold text-[10px] font-mono font-black border border-gold/30">
+              {players.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Right Utility Buttons: Mute Sound & Host Pause */}
+        <div className="flex items-center gap-2 flex-nowrap min-w-max">
+          <button
+            type="button"
+            onClick={handleToggleMute}
+            className={`p-2 rounded-xl border transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer ${
+              muted
+                ? "bg-red-950/60 border-red-500/60 text-red-300"
+                : "bg-black/40 border-border text-gold hover:bg-gold/10"
+            }`}
+            title={muted ? "Audio Muted - Click to Unmute" : "Audio Active - Click to Mute"}
+          >
+            {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            <span className="hidden sm:inline text-[11px]">{muted ? "Muted" : "Sound ON"}</span>
+          </button>
+
+          {isHost && onUpdateTimer && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("TIMER")}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                activeTab === "TIMER"
+                  ? "bg-cyan-500 text-black border-cyan-400 shadow-md"
+                  : "bg-black/40 border-border text-cyan-400 hover:border-cyan-500/50 hover:bg-cyan-500/10"
+              }`}
+              title="Change auction timer duration"
+            >
+              <Timer size={13} className="text-cyan-400" />
+              <span className="hidden sm:inline">Set Timer</span>
+            </button>
+          )}
+
+          {isHost && onTogglePause && (
+            <button
+              type="button"
+              onClick={onTogglePause}
+              className={`px-3.5 py-1.5 rounded-xl border text-xs font-black transition-all flex items-center gap-1.5 shadow-md cursor-pointer ${
+                isPaused
+                  ? "bg-emerald-500 text-black border-emerald-400 hover:brightness-110 animate-bounce"
+                  : "bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30"
+              }`}
+            >
+              {isPaused ? <Play size={13} /> : <Pause size={13} />}
+              <span>{isPaused ? "Resume Auction" : "Pause Auction"}</span>
+            </button>
+          )}
+        </div>
+      </nav>
+
+      {/* POP-UP MODAL DIALOG */}
+      <Dialog open={Boolean(activeTab)} onOpenChange={(open) => !open && setActiveTab(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-6 bg-panel/95 border-gold/40 text-cream backdrop-blur-xl">
+          <DialogHeader className="border-b border-border/80 pb-3 flex-shrink-0 text-left">
+            <DialogTitle className="text-xl font-black text-cream font-display flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                {activeTab === "TIMER" && (
+                  <>
+                    <Timer className="text-cyan-400" size={20} />
+                    <span>Host Live Auction Timer Controls</span>
+                  </>
+                )}
+                {activeTab === "RULES" && (
+                  <>
+                    <BookOpen className="text-gold" size={20} />
+                    <span>Official Auction & IPL Tournament Rules</span>
+                  </>
+                )}
+                {activeTab === "SOLD" && (
+                  <>
+                    <Gavel className="text-emerald-400" size={20} />
+                    <span>Sold {isCricket ? "Cricketers" : "Movies"} ({soldList.length})</span>
+                  </>
+                )}
+                {activeTab === "UNSOLD" && (
+                  <>
+                    <XCircle className="text-red-400" size={20} />
+                    <span>Unsold / Passed Items ({unsoldList.length})</span>
+                  </>
+                )}
+                {activeTab === "UPCOMING" && (
+                  <>
+                    <Clock className="text-cyan-400" size={20} />
+                    <span>Upcoming Pool Queue ({upcomingList.length})</span>
+                  </>
+                )}
+                {activeTab === "ALL" && (
+                  <>
+                    <ListFilter className="text-gold" size={20} />
+                    <span>Full Auction Pool Catalogue ({moviePool.length} Items)</span>
+                  </>
+                )}
+                {activeTab === "SQUADS" && (
+                  <>
+                    <Users className="text-gold" size={20} />
+                    <span>{isCricket ? "Franchise Squads & Purchases" : "Studio Slates & Purchases"} ({players.length} Teams)</span>
+                  </>
+                )}
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* SQUADS CONTENT (FRANCHISE ROSTERS & PURCHASES MODAL) */}
+          {activeTab === "SQUADS" && (
+            <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-4 text-xs sm:text-sm text-left">
+              {/* Franchise Selector Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-2 border-b border-border/70 scrollbar-none flex-shrink-0">
+                {players.map((p) => {
+                  const isSelected = p.id === (selectedSquadPlayerId || players[0]?.id);
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setSelectedSquadPlayerId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-shrink-0 cursor-pointer ${
+                        isSelected
+                          ? "bg-gold text-black shadow-md shadow-gold/20 font-black"
+                          : "bg-black/50 text-cream/80 hover:bg-black/80 border border-border/70 hover:border-gold/50"
+                      }`}
+                    >
+                      <span>{p.avatar}</span>
+                      <span className="truncate max-w-[110px]">{p.name}</span>
+                      <span className="px-1.5 py-0.2 rounded-full bg-black/40 text-[10px] font-mono">
+                        {(p.movies || []).length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Inspected Franchise Details */}
+              {(() => {
+                const target = players.find((p) => p.id === (selectedSquadPlayerId || players[0]?.id)) || players[0];
+                if (!target) return null;
+                const targetMovies = target.movies || [];
+                const totalSpent = targetMovies.reduce((sum, m) => sum + (m.purchasePrice || m.basePrice || 0), 0);
+                const overseasCount = isCricket ? targetMovies.filter((m) => isOverseasPlayer(m)).length : 0;
+
+                return (
+                  <div className="flex flex-col gap-3">
+                    {/* Summary Bar */}
+                    <div className="p-3.5 rounded-2xl bg-black/40 border border-border/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-10 h-10 rounded-xl bg-gold/15 text-gold border border-gold/30 flex items-center justify-center text-lg font-bold">
+                          {target.avatar}
+                        </span>
+                        <div>
+                          <h4 className="text-sm font-black text-cream font-display uppercase tracking-wide">
+                            {target.name} {target.isHost && "👑 (Host)"}
+                          </h4>
+                          <span className="text-[11px] text-muted-foreground">
+                            {targetMovies.length} {isCricket ? "cricketers acquired" : "movies acquired"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="px-3 py-1 rounded-xl bg-black/50 border border-border/70 text-center">
+                          <span className="block text-[9px] uppercase tracking-wider text-muted-foreground font-bold">PURSE LEFT</span>
+                          <strong className="text-xs font-black text-emerald-400 font-mono">{formatCr(target.budget)}</strong>
+                        </div>
+                        <div className="px-3 py-1 rounded-xl bg-black/50 border border-border/70 text-center">
+                          <span className="block text-[9px] uppercase tracking-wider text-muted-foreground font-bold">SPENT</span>
+                          <strong className="text-xs font-black text-gold font-mono">{formatCr(totalSpent)}</strong>
+                        </div>
+                        {isCricket && (
+                          <div className="px-3 py-1 rounded-xl bg-black/50 border border-border/70 text-center">
+                            <span className="block text-[9px] uppercase tracking-wider text-muted-foreground font-bold">OVERSEAS</span>
+                            <strong className="text-xs font-black text-cyan-300 font-mono">{overseasCount}/7</strong>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Acquired Items Grid */}
+                    {targetMovies.length === 0 ? (
+                      <div className="py-12 text-center text-xs text-muted-foreground bg-black/20 rounded-2xl border border-dashed border-border/60">
+                        {target.name} has not acquired any {isCricket ? "cricketers" : "movies"} yet.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {targetMovies.map((m, i) => {
+                          const role = getRoleBadge(m.role, m.genre);
+                          const isOverseas = isCricket && isOverseasPlayer(m);
+                          return (
+                            <div key={`${m.id}_modal_${i}`} className="p-2.5 rounded-2xl bg-black/60 border border-border/70 flex flex-col gap-2">
+                              <div className={`${isCricket ? "aspect-[3/4]" : "aspect-[2/3]"} w-full rounded-xl overflow-hidden bg-black relative`}>
+                                <Poster movie={m} className="w-full h-full object-cover" />
+                                <span className="absolute top-1 right-1 px-1.5 py-0.5 rounded bg-black/80 text-[9px] font-mono font-bold text-gold border border-gold/30">
+                                  {formatCr(m.purchasePrice || m.basePrice)}
+                                </span>
+                              </div>
+                              <div className="flex flex-col min-w-0 text-left">
+                                <strong className="text-xs font-bold text-cream truncate">{m.title}</strong>
+                                {isCricket ? (
+                                  <div className="flex items-center justify-between gap-1 mt-1">
+                                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border truncate ${role.colorClass}`}>
+                                      {role.label}
+                                    </span>
+                                    <span className="text-[10px]" title={isOverseas ? "Overseas" : "Indian"}>
+                                      {isOverseas ? "✈️" : "🇮🇳"}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground mt-0.5">★ {m.imdbRating} • {m.genre}</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* TIMER CONTENT */}
+          {activeTab === "TIMER" && onUpdateTimer && (
+            <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-5 text-left text-xs sm:text-sm">
+              <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-500/40 flex flex-col gap-1.5">
+                <h3 className="font-black text-cyan-400 uppercase tracking-wider text-sm flex items-center gap-1.5">
+                  <Timer size={16} /> Adjust Live Round Countdown Clock
+                </h3>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  Change the timer anytime mid-auction. The new duration takes effect immediately and synchronizes across all connected devices in real-time.
+                </p>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-black text-cream uppercase tracking-wider">
+                  Quick Duration Presets
+                </span>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {[
+                    { sec: 10, label: "10s" },
+                    { sec: 15, label: "15s" },
+                    { sec: 20, label: "20s" },
+                    { sec: 30, label: "30s" },
+                    { sec: 45, label: "45s" },
+                    { sec: 60, label: "60s" },
+                  ].map((preset) => (
+                    <button
+                      key={preset.sec}
+                      type="button"
+                      onClick={() => {
+                        onUpdateTimer(preset.sec);
+                        setActiveTab(null);
+                      }}
+                      className="p-3 rounded-2xl bg-black/50 border border-border/80 hover:border-cyan-400 text-cyan-300 font-mono font-black text-sm text-center transition-all hover:bg-cyan-950/50 cursor-pointer shadow-sm"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Add Extra Time */}
+              <div className="flex flex-col gap-2">
+                <span className="text-xs font-black text-cream uppercase tracking-wider">
+                  Add Extra Time to Current Clock
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateTimer(10, true);
+                      setActiveTab(null);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-500/40 hover:bg-emerald-500/30 text-emerald-300 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    +10 Seconds
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateTimer(20, true);
+                      setActiveTab(null);
+                    }}
+                    className="px-4 py-2.5 rounded-xl bg-cyan-500/20 border border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    +20 Seconds
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Manual Input */}
+              <div className="p-4 rounded-2xl bg-black/40 border border-gold/30 flex flex-col gap-3">
+                <span className="text-xs font-black text-gold uppercase tracking-wider">
+                  Custom Manual Timer Input
+                </span>
+                <div className="flex items-center gap-3">
+                  <div className="relative flex items-center">
+                    <input
+                      type="number"
+                      min="3"
+                      max="300"
+                      value={customSecInput}
+                      onChange={(e) => setCustomSecInput(e.target.value)}
+                      placeholder="Seconds"
+                      className="w-28 px-3.5 py-2.5 rounded-xl bg-panel border border-border/80 text-cream font-mono font-black text-sm focus:border-gold focus:outline-none"
+                    />
+                    <span className="ml-2 text-xs text-muted-foreground font-bold">seconds</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = parseInt(customSecInput, 10);
+                      if (!isNaN(val) && val >= 3) {
+                        onUpdateTimer(val);
+                        setActiveTab(null);
+                      }
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-gold to-amber-500 hover:brightness-110 text-black font-black text-xs uppercase tracking-wider shadow-md cursor-pointer"
+                  >
+                    Set Custom Timer
+                  </button>
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  Accepts any duration from 3 to 300 seconds. Sets round clock instantly across all devices.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* RULES CONTENT */}
+          {activeTab === "RULES" ? (
+            <div className="flex-1 overflow-y-auto py-3 flex flex-col gap-4 text-xs sm:text-sm text-left">
+              {isCricket ? (
+                <>
+                  <div className="p-4 rounded-2xl bg-black/40 border border-gold/30 flex flex-col gap-2">
+                    <h3 className="font-black text-gold uppercase tracking-wider text-sm flex items-center gap-1.5">
+                      <Shield size={16} /> Purse & Squad Composition
+                    </h3>
+                    <ul className="list-disc list-inside text-cream/90 flex flex-col gap-1.5">
+                      <li><strong>Purse Cap:</strong> ₹100.00 Cr budget per franchise.</li>
+                      <li><strong>Squad Size:</strong> 12 to 18 players per squad.</li>
+                      <li><strong>Overseas Quota in Squad:</strong> Maximum <strong>7 foreign players</strong> can be purchased.</li>
+                      <li><strong>Playing 11 Overseas Limit:</strong> Maximum <strong>4 overseas players</strong> can be selected in your starting match XI.</li>
+                      <li><strong>Wicketkeeper Mandate:</strong> At least 1 designated wicketkeeper required in your starting XI.</li>
+                    </ul>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-black/40 border border-cyan-500/30 flex flex-col gap-2">
+                    <h3 className="font-black text-cyan-400 uppercase tracking-wider text-sm flex items-center gap-1.5">
+                      <Trophy size={16} /> IPL Tournament Simulation End Result
+                    </h3>
+                    <p className="text-cream/90 leading-relaxed">
+                      After the live auction concludes and franchises lock in their Playing 11s, the game launches an interactive <strong>IPL Tournament Simulation</strong>:
+                    </p>
+                    <ul className="list-disc list-inside text-cream/90 flex flex-col gap-1.5 mt-1">
+                      <li><strong>League Stage:</strong> Round-robin clashes with realistic T20 match scorecards powered by AI.</li>
+                      <li><strong>IPL Points Table:</strong> Points (2 for win) + Net Run Rate (NRR) tabulated after every match.</li>
+                      <li><strong>IPL Playoffs:</strong> Qualifier 1 (#1 vs #2), Eliminator (#3 vs #4), Qualifier 2, and Grand Final!</li>
+                      <li><strong>Champion Podium:</strong> Gold trophy ceremony, Orange Cap (Top Batsman), and Purple Cap (Top Bowler).</li>
+                    </ul>
+                  </div>
+                </>
+              ) : (
+                <div className="p-4 rounded-2xl bg-black/40 border border-gold/30 flex flex-col gap-2">
+                  <h3 className="font-black text-gold uppercase tracking-wider text-sm flex items-center gap-1.5">
+                    <Film size={16} /> Film Studio Auction Rules
+                  </h3>
+                  <ul className="list-disc list-inside text-cream/90 flex flex-col gap-1.5">
+                    <li><strong>Studio Slate:</strong> Acquire 5 blockbuster films into your studio portfolio.</li>
+                    <li><strong>Grand Jury Criteria:</strong> Scored on IMDb Acclaim (40%), Box Office ROI (30%), Genre Diversity (20%), and Budget Discipline (10%).</li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* LIST CONTENT (SOLD, UNSOLD, UPCOMING, ALL) */
+            <div className="flex-1 flex flex-col min-h-0 gap-3 pt-2">
+              {/* Search & Filter Bar */}
+              <div className="flex flex-col sm:flex-row items-center gap-2 flex-shrink-0">
+                <div className="relative flex-1 w-full">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={`Search ${isCricket ? "cricketer" : "film"} by name...`}
+                    className="w-full bg-black/60 border border-border/80 rounded-xl pl-9 pr-3 py-2 text-xs text-cream outline-none focus:border-gold"
+                  />
+                </div>
+
+                {isCricket && (
+                  <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 scrollbar-none">
+                    {["ALL", "BATSMAN", "BOWLER", "ALL_ROUNDER", "WICKETKEEPER", "INDIAN", "OVERSEAS"].map((role) => (
+                      <button
+                        key={role}
+                        type="button"
+                        onClick={() => setRoleFilter(role)}
+                        className={`text-[10px] px-2 py-1 rounded-lg border font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                          roleFilter === role
+                            ? "bg-gold text-black border-gold"
+                            : "bg-black/40 border-border text-muted-foreground hover:text-cream"
+                        }`}
+                      >
+                        {role.replace("_", " ")}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Items Grid */}
+              <div className="flex-1 overflow-y-auto pr-1">
+                {activeTab === "SOLD" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {soldList.filter((item) => filterItem(item.movie)).length === 0 ? (
+                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
+                        No sold items match this filter yet.
+                      </div>
+                    ) : (
+                      soldList
+                        .filter((item) => filterItem(item.movie))
+                        .map(({ movie, buyerName, price }) => (
+                          <div
+                            key={movie.id}
+                            className="p-3 rounded-2xl bg-black/50 border border-emerald-500/40 flex items-center gap-3"
+                          >
+                            <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
+                              <Poster movie={movie} className="w-full h-full object-cover" />
+                            </div>
+                            <div className="flex flex-col min-w-0 text-left">
+                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                              <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                              <div className="mt-1 flex items-center justify-between text-[11px] gap-2">
+                                <span className="text-emerald-400 font-bold truncate">Acquired by {buyerName}</span>
+                                <span className="text-gold font-black font-mono">{formatCr(price)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                )}
+
+                {activeTab === "UNSOLD" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {unsoldList.filter(filterItem).length === 0 ? (
+                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
+                        No unsold items so far! Every auctioned item received bids.
+                      </div>
+                    ) : (
+                      unsoldList.filter(filterItem).map((movie) => (
+                        <div
+                          key={movie.id}
+                          className="p-3 rounded-2xl bg-black/50 border border-red-500/40 flex items-center gap-3"
+                        >
+                          <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
+                            <Poster movie={movie} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="flex flex-col min-w-0 text-left">
+                            <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                            <div className="mt-1 flex items-center justify-between text-[11px]">
+                              <span className="text-red-400 font-bold">Unsold / Passed</span>
+                              <span className="text-muted-foreground font-mono">Base: {formatCr(movie.basePrice)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {activeTab === "UPCOMING" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {upcomingList.filter(filterItem).length === 0 ? (
+                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
+                        No upcoming items match this filter.
+                      </div>
+                    ) : (
+                      upcomingList.filter(filterItem).map((movie, idx) => (
+                        <div
+                          key={movie.id}
+                          className="p-3 rounded-2xl bg-black/50 border border-border/80 hover:border-cyan-500/50 flex items-center gap-3"
+                        >
+                          <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
+                            <Poster movie={movie} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="flex flex-col min-w-0 text-left">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 font-mono">
+                                In {idx + 1}
+                              </span>
+                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                            <div className="mt-1 flex items-center justify-between text-[11px]">
+                              <span className="text-gold font-bold font-mono">Base: {formatCr(movie.basePrice)}</span>
+                              {movie.stats?.strikeRate && (
+                                <span className="text-[10px] text-cyan-300 font-mono">SR: {movie.stats.strikeRate}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {activeTab === "ALL" && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    {moviePool.filter(filterItem).map((movie) => {
+                      const isSold = soldMap.has(movie.id);
+                      const soldData = soldMap.get(movie.id);
+                      return (
+                        <div
+                          key={movie.id}
+                          className={`p-2.5 rounded-2xl border flex flex-col gap-2 relative text-left ${
+                            isSold
+                              ? "bg-black/40 border-emerald-500/40"
+                              : "bg-black/60 border-border/70 hover:border-gold/50"
+                          }`}
+                        >
+                          <div className="aspect-[3/4] w-full rounded-xl overflow-hidden bg-black relative">
+                            <Poster movie={movie} className="w-full h-full object-cover" />
+                            {isSold && (
+                              <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                                <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 text-emerald-400 border border-emerald-500/50 text-[10px] font-black uppercase">
+                                  SOLD
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <strong className="text-xs font-bold text-cream truncate">{movie.title}</strong>
+                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                            <div className="mt-1 flex items-center justify-between text-[10px]">
+                              <span className="text-gold font-bold">{formatCr(movie.basePrice)}</span>
+                              {isSold && soldData && (
+                                <span className="text-emerald-400 font-bold truncate max-w-[80px]">
+                                  {soldData.buyerName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export { Users };
+
