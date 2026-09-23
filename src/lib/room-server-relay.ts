@@ -40,21 +40,50 @@ export function broadcastRoomUpdate(roomCode: string, roomData: any): void {
   }
 }
 
-export function getStoredRoom(roomCode: string): any | null {
-  const code = roomCode.toUpperCase();
-  const entry = rooms.get(code);
-  if (!entry) return null;
-  // Expire rooms after 24 hours of inactivity
-  if (Date.now() - entry.updatedAt > 24 * 60 * 60 * 1000) {
-    rooms.delete(code);
-    return null;
+function getRelayCandidates(rawCode: string): string[] {
+  if (!rawCode) return [];
+  const clean = rawCode.trim().toUpperCase().replace(/\s+/g, "");
+  const candidates = new Set<string>();
+  candidates.add(clean);
+  if (clean.startsWith("IPL")) {
+    const after = clean.replace(/^IPL-?/, "");
+    if (after) {
+      candidates.add(`IPL-${after}`);
+      candidates.add(after);
+    }
+  } else if (clean.startsWith("CINE")) {
+    const after = clean.replace(/^CINE-?/, "");
+    if (after) {
+      candidates.add(`CINE-${after}`);
+      candidates.add(after);
+    }
+  } else {
+    candidates.add(`IPL-${clean}`);
+    candidates.add(`CINE-${clean}`);
   }
-  return entry.data;
+  return Array.from(candidates);
+}
+
+export function getStoredRoom(roomCode: string): any | null {
+  if (!roomCode) return null;
+  const candidates = getRelayCandidates(roomCode);
+  for (const c of candidates) {
+    const entry = rooms.get(c);
+    if (entry) {
+      // Expire rooms after 24 hours of inactivity
+      if (Date.now() - entry.updatedAt > 24 * 60 * 60 * 1000) {
+        rooms.delete(c);
+        return null;
+      }
+      return entry.data;
+    }
+  }
+  return null;
 }
 
 export function saveStoredRoom(roomCode: string, roomData: any): any {
-  const code = roomCode.toUpperCase();
-  const existing = rooms.get(code)?.data;
+  const canonicalCode = (roomData?.roomCode || roomCode).toUpperCase();
+  const existing = getStoredRoom(canonicalCode);
 
   // Merge players or protect against stale overwrites if needed
   let toSave = roomData;
@@ -81,22 +110,22 @@ export function saveStoredRoom(roomCode: string, roomData: any): any {
     }
   }
 
-  rooms.set(code, {
-    roomCode: code,
+  rooms.set(canonicalCode, {
+    roomCode: canonicalCode,
     updatedAt: Date.now(),
     data: toSave,
   });
 
-  broadcastRoomUpdate(code, toSave);
+  broadcastRoomUpdate(canonicalCode, toSave);
   return toSave;
 }
 
-export function addPlayerToStoredRoom(roomCode: string, player: any): { success: boolean; room?: any; error?: string } {
-  const code = roomCode.toUpperCase();
-  const room = getStoredRoom(code);
+export function addPlayerToStoredRoom(roomCode: string, player: any): { success: boolean; room?: any; error?: string; notFound?: boolean } {
+  const room = getStoredRoom(roomCode);
   if (!room) {
-    return { success: false, error: `Room ${code} not found. Ensure the host has created the room.` };
+    return { success: false, notFound: true, error: `Room ${roomCode} not found in relay memory.` };
   }
+  const code = (room.roomCode || roomCode).toUpperCase();
 
   if (!room.players) room.players = [];
 

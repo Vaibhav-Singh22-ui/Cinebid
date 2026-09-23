@@ -721,25 +721,35 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
         : room.players.filter((p) => p.id === currentUser.id);
 
       if (playersToUpsert.length > 0) {
-        const playerRows = playersToUpsert.map((p) => ({
-          id: p.id,
-          room_code: code,
-          user_id: p.id,
-          name: p.name,
-          avatar: p.avatar || "CB",
-          color: p.color || "#f5c518",
-          budget: p.budget,
-          initial_budget: p.initialBudget,
-          is_host: p.isHost ?? false,
-          is_bot: p.isBot ?? false,
-          is_ready: p.ready ?? true,
-          movies: (p.movies || []) as any,
-        }));
+        const playerRows = playersToUpsert.map((p) => {
+          const rawBudget = Number(p.budget);
+          const validBudget = Number.isFinite(rawBudget) ? rawBudget : (Number(room.settings?.startingBudget) || 100);
+          const rawInit = Number(p.initialBudget);
+          const validInitialBudget = Number.isFinite(rawInit) ? rawInit : validBudget;
+          const cleanName = (p.name || "Franchise Owner").trim().slice(0, 30) || "Franchise Owner";
+          const cleanId = String(p.id || "").trim() || `user_${Date.now()}`;
+
+          return {
+            id: cleanId,
+            room_code: code,
+            user_id: cleanId,
+            name: cleanName,
+            avatar: p.avatar || "CB",
+            color: p.color || "#f5c518",
+            budget: validBudget,
+            initial_budget: validInitialBudget,
+            is_host: Boolean(p.isHost),
+            is_bot: Boolean(p.isBot),
+            is_ready: Boolean(p.ready ?? true),
+            movies: Array.isArray(p.movies) ? p.movies : [],
+          };
+        });
+
         const { error: pErr } = await supabase
           .from("room_players")
           .upsert(playerRows, { onConflict: "id,room_code" });
         if (pErr) {
-          console.error("[Supabase Sync] Players upsert error:", pErr);
+          console.error("[Supabase Sync] Players upsert error:", pErr, "payload:", playerRows);
         }
       }
     }
@@ -770,20 +780,52 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
   }
 }
 
+export function getCandidateRoomCodes(rawCode: string): string[] {
+  if (!rawCode) return [];
+  const clean = rawCode.trim().toUpperCase().replace(/\s+/g, "");
+  const candidates = new Set<string>();
+  candidates.add(clean);
+
+  if (clean.startsWith("IPL")) {
+    const after = clean.replace(/^IPL-?/, "");
+    if (after) {
+      candidates.add(`IPL-${after}`);
+      candidates.add(after);
+    }
+  } else if (clean.startsWith("CINE")) {
+    const after = clean.replace(/^CINE-?/, "");
+    if (after) {
+      candidates.add(`CINE-${after}`);
+      candidates.add(after);
+    }
+  } else {
+    // Suffix only like "HBEC"
+    candidates.add(`IPL-${clean}`);
+    candidates.add(`CINE-${clean}`);
+  }
+
+  return Array.from(candidates);
+}
+
 export function getRoom(roomCode: string): RoomState | null {
   if (typeof window === "undefined" || !roomCode) return null;
   try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}${roomCode.toUpperCase()}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (!parsed.outPlayerIds) parsed.outPlayerIds = [];
-      if (!parsed.auctionType) parsed.auctionType = parsed.settings?.auctionType || "CINEMA";
-      if (Array.isArray(parsed.players)) {
-        parsed.players.forEach((p: any) => {
-          if (!p.movies) p.movies = [];
-        });
+    const candidates = getCandidateRoomCodes(roomCode);
+    for (const cand of candidates) {
+      const raw = localStorage.getItem(`${STORAGE_PREFIX}${cand}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (!parsed.outPlayerIds) parsed.outPlayerIds = [];
+        if (!parsed.auctionType) {
+          parsed.auctionType = parsed.settings?.auctionType || (cand.startsWith("IPL") ? "CRICKET" : "CINEMA");
+        }
+        if (Array.isArray(parsed.players)) {
+          parsed.players.forEach((p: any) => {
+            if (!p.movies) p.movies = [];
+          });
+        }
+        return parsed;
       }
-      return parsed;
     }
   } catch (e) {
     console.error("Failed to parse room data", e);
@@ -792,32 +834,46 @@ export function getRoom(roomCode: string): RoomState | null {
 }
 
 export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | null> {
-  const code = roomCode.toUpperCase();
+  if (!roomCode) return null;
+  const candidates = getCandidateRoomCodes(roomCode);
+  const primaryCode = candidates[0] || roomCode.toUpperCase();
+
   try {
     // 1. In-App Server Relay (instant, authoritative, works across all devices and browsers)
     try {
       let serverRoom: RoomState | null = null;
-      try {
-        const rpcResult = (await fetchRoomServerFn({ data: code })) as RoomState | null;
-        if (rpcResult && rpcResult.roomCode) {
-          serverRoom = rpcResult;
+      for (const cand of candidates) {
+        try {
+          const rpcResult = (await fetchRoomServerFn({ data: cand })) as RoomState | null;
+          if (rpcResult && rpcResult.roomCode) {
+            serverRoom = rpcResult;
+            break;
+          }
+        } catch {
+          // continue checking
         }
-      } catch {
-        // Fall back to HTTP endpoint
       }
 
       if (!serverRoom) {
-        const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
-        if (resp.ok) {
-          const json = await resp.json();
-          if (json.success && json.room) {
-            serverRoom = json.room as RoomState;
+        for (const cand of candidates) {
+          try {
+            const resp = await fetch(`/api/rooms/${encodeURIComponent(cand)}`);
+            if (resp.ok) {
+              const json = await resp.json();
+              if (json.success && json.room) {
+                serverRoom = json.room as RoomState;
+                break;
+              }
+            }
+          } catch {
+            // continue checking
           }
         }
       }
 
       if (serverRoom) {
-        const local = getRoom(code);
+        const canonicalCode = serverRoom.roomCode.toUpperCase();
+        const local = getRoom(canonicalCode);
         if (!local || isPacketNewer(local, serverRoom)) {
           saveRoom(serverRoom, true, false, true);
           return serverRoom;
@@ -830,30 +886,34 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
 
     // 2. Supabase Fallback (if configured and reachable)
     try {
-      const { data: remoteRoom, error: roomError } = await supabase
-        .from("rooms")
-        .select("*")
-        .eq("room_code", code)
-        .maybeSingle();
+      let query = supabase.from("rooms").select("*");
+      if (candidates.length === 1) {
+        query = query.eq("room_code", candidates[0]!);
+      } else {
+        query = query.in("room_code", candidates);
+      }
+      const { data: remoteRooms, error: roomError } = await query.limit(1);
+      const remoteRoom = remoteRooms?.[0];
 
       if (!roomError && remoteRoom) {
+        const canonicalCode = remoteRoom.room_code.toUpperCase();
         const { data: remotePlayers } = await supabase
           .from("room_players")
           .select("*")
-          .eq("room_code", code)
+          .eq("room_code", canonicalCode)
           .order("joined_at", { ascending: true });
 
         const { data: remoteMessages } = await supabase
           .from("room_messages")
           .select("*")
-          .eq("room_code", code)
+          .eq("room_code", canonicalCode)
           .order("created_at", { ascending: true })
           .limit(100);
 
         const { data: remoteBids } = await supabase
           .from("room_bids")
           .select("*")
-          .eq("room_code", code)
+          .eq("room_code", canonicalCode)
           .order("created_at", { ascending: false })
           .limit(30);
 
@@ -887,7 +947,7 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           time: new Date(b.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         }));
 
-        const local = getRoom(code);
+        const local = getRoom(canonicalCode);
 
         // Merge bid history
         const mergedBids = [...mappedBids];
@@ -929,7 +989,7 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           (settings as any)?.auctionType ||
           settings.auctionType ||
           local?.auctionType ||
-          (code.startsWith("IPL") ? "CRICKET" : "CINEMA");
+          (canonicalCode.startsWith("IPL") ? "CRICKET" : "CINEMA");
         const remoteVersion = Number((settings as any)?.version || remoteIndex * 100 + 1);
 
         if (local) {
@@ -955,15 +1015,27 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           finalBidderName = local.currentBidderName;
         }
 
+        const isCricketRoom = auctionType === "CRICKET" || canonicalCode.startsWith("IPL");
+        const defaultPool = isCricketRoom
+          ? getRandomizedMovieSlate(60, "ALL", "CRICKET")
+          : movies;
+
+        const resolvedPool = (Array.isArray(remoteRoom.movie_pool) && remoteRoom.movie_pool.length > 0)
+          ? (remoteRoom.movie_pool as unknown as Movie[])
+          : (local?.moviePool && local.moviePool.length > 0 ? local.moviePool : defaultPool);
+
         const parsedRoom: RoomState = {
-          roomCode: remoteRoom.room_code,
+          roomCode: canonicalCode,
           createdAt: new Date(remoteRoom.created_at).getTime(),
-          settings,
+          settings: {
+            ...settings,
+            auctionType,
+          },
           hostId: remoteRoom.host_id,
           hostName: remoteRoom.host_name,
           status: remoteRoom.status as any,
           players: mergedPlayers.length ? mergedPlayers : local?.players || [],
-          moviePool: (remoteRoom.movie_pool as unknown as Movie[]) || local?.moviePool || movies,
+          moviePool: resolvedPool,
           currentMovieIndex: remoteIndex,
           currentBid: finalBid,
           currentBidderId: finalBidderId,
@@ -988,10 +1060,10 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
       // Supabase is offline or not configured
     }
 
-    return getRoom(code);
+    return getRoom(primaryCode);
   } catch (e) {
     console.error("fetchRemoteRoom error", e);
-    return getRoom(code);
+    return getRoom(primaryCode);
   }
 }
 
@@ -1216,82 +1288,91 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
 }
 
 export async function joinRoomAsync(roomCode: string, playerName: string): Promise<RoomState> {
-  const code = roomCode.toUpperCase();
+  const candidates = getCandidateRoomCodes(roomCode);
+  const primaryCode = candidates[0] || roomCode.toUpperCase();
 
   const currentUser = getCurrentUser();
   const cleanName = playerName.trim() || currentUser.name || "Franchise Owner";
   const user = setCurrentUser({ name: cleanName });
 
-  // 1. Try server relay join first
-  try {
-    const playerPayload = {
-      id: user.id,
-      name: user.name,
-      avatar: user.avatar,
-      color: user.color,
-      ready: true,
-    };
+  const playerPayload = {
+    id: user.id,
+    name: user.name,
+    avatar: user.avatar,
+    color: user.color,
+    ready: true,
+  };
 
-    let joinedRoom: RoomState | null = null;
+  // 1. Try server relay join first across candidate codes (non-blocking fallback)
+  let joinedRoom: RoomState | null = null;
+  for (const cand of candidates) {
     try {
-      const res = await joinRoomServerFn({ data: { roomCode: code, player: playerPayload } });
-      if (res && res.success && res.room) {
-        joinedRoom = res.room as RoomState;
-      } else if (res && !res.success && res.error) {
-        throw new Error(res.error);
-      }
-    } catch (rpcErr: any) {
-      if (rpcErr?.message && (rpcErr.message.includes("full") || rpcErr.message.includes("not found"))) {
-        throw rpcErr;
-      }
-      // Fall back to HTTP endpoint
-      const resp = await fetch(`/api/rooms/${encodeURIComponent(code)}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player: playerPayload }),
-      });
-
-      if (resp.ok) {
-        const json = await resp.json();
-        if (json.success && json.room) {
-          joinedRoom = json.room as RoomState;
-        } else if (json.error) {
-          throw new Error(json.error);
+      try {
+        const res = await joinRoomServerFn({ data: { roomCode: cand, player: playerPayload } });
+        if (res && res.success && res.room) {
+          joinedRoom = res.room as RoomState;
+          break;
+        } else if (res && !res.success && res.error) {
+          if (res.error.includes("full")) {
+            throw new Error(res.error);
+          }
+          // Cache miss on relay - continue to fallback
         }
-      } else if (resp.status === 400 || resp.status === 404) {
-        const json = await resp.json().catch(() => ({}));
-        if (json.error && json.error.includes("full")) {
-          throw new Error(json.error);
+      } catch (rpcErr: any) {
+        if (rpcErr?.message && rpcErr.message.includes("full")) {
+          throw rpcErr;
+        }
+        // Fall back to HTTP endpoint
+        const resp = await fetch(`/api/rooms/${encodeURIComponent(cand)}/join`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ player: playerPayload }),
+        });
+
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json.success && json.room) {
+            joinedRoom = json.room as RoomState;
+            break;
+          } else if (json.error && json.error.includes("full")) {
+            throw new Error(json.error);
+          }
+        } else if (resp.status === 400 || resp.status === 404) {
+          const json = await resp.json().catch(() => ({}));
+          if (json.error && json.error.includes("full")) {
+            throw new Error(json.error);
+          }
         }
       }
-    }
-
-    if (joinedRoom) {
-      saveRoom(joinedRoom, true, false, true);
-      return joinedRoom;
-    }
-  } catch (err: any) {
-    if (err?.message && (err.message.includes("full") || err.message.includes("not found"))) {
-      throw err;
+    } catch (err: any) {
+      if (err?.message && err.message.includes("full")) {
+        throw err;
+      }
     }
   }
 
-  // 2. Remote / local fetch
-  let room = await fetchRemoteRoom(code);
+  if (joinedRoom) {
+    saveRoom(joinedRoom, false, true, true);
+    await syncRoomToSupabase(joinedRoom);
+    return joinedRoom;
+  }
+
+  // 2. Authoritative Database Fetch (Supabase / local fallback)
+  let room = await fetchRemoteRoom(primaryCode);
   if (!room) {
-    room = getRoom(code);
+    room = getRoom(primaryCode);
   }
 
-  // CRITICAL FIX: If room does not exist, throw an explicit error! NEVER create a fake movie room!
+  // If room truly does not exist in any storage or database, throw explicit error
   if (!room) {
-    throw new Error(`Room "${code}" not found. Please verify the code or check if the host has created the room.`);
+    throw new Error(`Room "${primaryCode}" not found. Please verify the code or check if the host has created the room.`);
   }
 
-  // Check player capacity
+  const canonicalCode = room.roomCode.toUpperCase();
   const maxPlayers = room.settings?.maxPlayers || 8;
   const isAlreadyIn = room.players.some((p) => p.id === user.id || p.name.toLowerCase() === user.name.toLowerCase());
   if (!isAlreadyIn && room.players.length >= maxPlayers) {
-    throw new Error(`Room "${code}" is full (${maxPlayers}/${maxPlayers} players).`);
+    throw new Error(`Room "${canonicalCode}" is full (${maxPlayers}/${maxPlayers} players).`);
   }
 
   const existingNames = new Set(room.players.filter((p) => p.id !== user.id).map((p) => p.name.toLowerCase()));
@@ -1328,7 +1409,10 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
   }
 
   bumpRoomVersion(room);
-  saveRoom(room);
+  // Persist locally & server relay immediately
+  saveRoom(room, false, true);
+  // Synchronously persist new player row to Supabase before navigating
+  await syncRoomToSupabase(room);
   void broadcastRoomState(room, "room_state");
   return room;
 }

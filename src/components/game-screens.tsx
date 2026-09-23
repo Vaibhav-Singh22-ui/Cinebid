@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
+  ArrowUpDown,
   Award,
   BookOpen,
   Check,
@@ -23,6 +24,7 @@ import {
   Play,
   Radio,
   RotateCcw,
+  Search,
   Shield,
   Shuffle,
   Sparkles,
@@ -33,6 +35,7 @@ import {
   Wallet,
   XCircle,
   Zap,
+  Share2,
 } from "lucide-react";
 import {
   Dialog,
@@ -478,7 +481,7 @@ export function GameForm({
             return;
           }
         }
-        navigate({ to: "/room/$roomCode", params: { roomCode: cleanCode } });
+        navigate({ to: "/room/$roomCode", params: { roomCode: room.roomCode } });
       } catch (err: any) {
         setError(err?.message || "Failed to join room.");
       } finally {
@@ -602,7 +605,10 @@ export function GameForm({
               {/* Join Code Input */}
               {mode === "join" && (
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-bold uppercase text-muted-foreground">Room Code</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase text-muted-foreground">Room Code</label>
+                    <span className="text-[10px] text-muted-foreground/80">e.g. IPL-HBEC or HBEC</span>
+                  </div>
                   <input
                     type="text"
                     value={code}
@@ -615,8 +621,8 @@ export function GameForm({
                         setAuctionType("CINEMA");
                       }
                     }}
-                    placeholder="e.g. IPL-88 or CINE-78"
-                    maxLength={12}
+                    placeholder="Enter code (e.g. IPL-HBEC or HBEC)"
+                    maxLength={15}
                     className="w-full px-4 py-3 rounded-xl bg-black/50 border border-border font-mono font-black text-base text-gold uppercase tracking-widest placeholder:text-muted-foreground/60 focus:border-gold outline-none transition-all"
                     required
                   />
@@ -764,7 +770,12 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
   const navigate = useNavigate();
   const [room, setRoom] = useState<RoomState | null>(() => getRoom(code));
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [loading, setLoading] = useState(!getRoom(code));
+  const [lobbyTab, setLobbyTab] = useState<"ROOM" | "ROSTER" | "RULES">("ROOM");
+  const [rosterSearch, setRosterSearch] = useState("");
+  const [rosterRoleFilter, setRosterRoleFilter] = useState("ALL");
+  const [rosterSortBy, setRosterSortBy] = useState<"DEFAULT" | "PRICE_DESC" | "PRICE_ASC" | "NAME_ASC" | "NAME_DESC" | "RATING_DESC">("DEFAULT");
   const currentUser = getCurrentUser();
 
   useEffect(() => {
@@ -774,7 +785,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
       if (remote) {
         const isUserIn = remote.players.some((p) => p.id === currentUser.id);
         if (!isUserIn && remote.players.length < (remote.settings?.maxPlayers || 8)) {
-          void joinRoomAsync(code, currentUser.name).then((joined) => {
+          void joinRoomAsync(remote.roomCode, currentUser.name).then((joined) => {
             if (isMounted) setRoom(joined);
           }).catch(() => {
             if (isMounted) setRoom(remote);
@@ -793,7 +804,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
       setRoom(fresh);
       setLoading(false);
       if (fresh.status === "AUCTION") {
-        navigate({ to: "/game/$roomCode", params: { roomCode: code } });
+        navigate({ to: "/game/$roomCode", params: { roomCode: fresh.roomCode || code } });
       }
     });
 
@@ -803,9 +814,22 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
   const isHost = room?.hostId === currentUser.id;
 
   const copyCode = () => {
-    void navigator.clipboard.writeText(code);
+    const targetCode = room?.roomCode || code;
+    void navigator.clipboard.writeText(targetCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const copyInviteLink = () => {
+    const targetCode = room?.roomCode || code;
+    const url = typeof window !== "undefined"
+      ? `${window.location.origin}/room/${encodeURIComponent(targetCode)}`
+      : "";
+    if (url) {
+      void navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
   };
 
   const handleShufflePool = () => {
@@ -888,7 +912,6 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
 
   const isCricket = room.auctionType === "CRICKET" || code.startsWith("IPL");
   const emptySlots = Math.max(0, room.settings.maxPlayers - room.players.length);
-  const [lobbyTab, setLobbyTab] = useState<"ROOM" | "ROSTER" | "RULES">("ROOM");
 
   return (
     <Page>
@@ -947,7 +970,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
             </span>
             <div className="flex items-center gap-2">
               <span className="px-5 py-2.5 rounded-2xl bg-black/60 border border-gold/50 font-mono font-black text-2xl sm:text-3xl text-gold tracking-widest shadow-inner">
-                {code}
+                {room?.roomCode || code}
               </span>
               <button
                 type="button"
@@ -956,6 +979,15 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
                 title="Copy Room Code"
               >
                 {copied ? <Check size={18} className="text-emerald-400" /> : <Copy size={18} />}
+              </button>
+              <button
+                type="button"
+                onClick={copyInviteLink}
+                className="btn btn-secondary px-3.5 py-3 rounded-2xl border border-border/80 hover:border-gold/50 text-cream text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md"
+                title="Copy Full Invite Link to Share"
+              >
+                {copiedLink ? <Check size={16} className="text-emerald-400" /> : <Share2 size={16} className="text-gold" />}
+                <span className="hidden sm:inline">{copiedLink ? "Link Copied!" : "Invite Link"}</span>
               </button>
             </div>
           </div>
@@ -984,11 +1016,144 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 max-h-[580px] overflow-y-auto pr-1.5">
-              {room.moviePool.map((item) => (
-                <MovieCard key={item.id} movie={item} />
-              ))}
+            {/* Search, Filter & Sort Bar */}
+            <div className="flex flex-col gap-2 border-b border-border/60 pb-3">
+              <div className="flex flex-col sm:flex-row items-center gap-2">
+                <div className="relative flex-1 w-full">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={rosterSearch}
+                    onChange={(e) => setRosterSearch(e.target.value)}
+                    placeholder={`Search ${isCricket ? "cricketer" : "film"} by name...`}
+                    className="w-full bg-black/60 border border-border/80 rounded-xl pl-9 pr-8 py-2 text-xs text-cream outline-none focus:border-gold"
+                  />
+                  {rosterSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setRosterSearch("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-cream text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-start bg-black/50 border border-border/80 rounded-xl px-3 py-1.5 shadow-inner">
+                  <div className="flex items-center gap-1.5 text-gold">
+                    <ArrowUpDown size={13} />
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground">Sort:</span>
+                  </div>
+                  <select
+                    value={rosterSortBy}
+                    onChange={(e) => setRosterSortBy(e.target.value as any)}
+                    className="bg-transparent text-cream text-xs font-bold outline-none cursor-pointer pr-1"
+                  >
+                    <option value="DEFAULT" className="bg-panel text-cream">Auction Pool Order</option>
+                    <option value="PRICE_DESC" className="bg-panel text-cream">Base Price: High → Low</option>
+                    <option value="PRICE_ASC" className="bg-panel text-cream">Base Price: Low → High</option>
+                    <option value="NAME_ASC" className="bg-panel text-cream">Name: A → Z</option>
+                    <option value="NAME_DESC" className="bg-panel text-cream">Name: Z → A</option>
+                    <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                  </select>
+                </div>
+              </div>
+
+              {isCricket && (
+                <div className="flex items-center gap-1 overflow-x-auto w-full pb-1 scrollbar-none">
+                  {[
+                    { id: "ALL", label: "All" },
+                    { id: "BATTER", label: "Batters" },
+                    { id: "BOWLER", label: "Bowlers" },
+                    { id: "ALL_ROUNDER", label: "All-Rounders" },
+                    { id: "WICKETKEEPER", label: "Keepers" },
+                    { id: "INDIAN", label: "🇮🇳 Indian" },
+                    { id: "OVERSEAS", label: "✈️ Overseas" },
+                  ].map((chip) => (
+                    <button
+                      key={chip.id}
+                      type="button"
+                      onClick={() => setRosterRoleFilter(chip.id)}
+                      className={`text-[10px] px-2.5 py-1 rounded-lg border font-bold transition-all whitespace-nowrap cursor-pointer ${
+                        rosterRoleFilter === chip.id
+                          ? "bg-gold text-black border-gold shadow-sm font-black"
+                          : "bg-black/40 border-border text-muted-foreground hover:text-cream hover:border-gold/40"
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                  {(rosterRoleFilter !== "ALL" || rosterSearch) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRosterRoleFilter("ALL");
+                        setRosterSearch("");
+                      }}
+                      className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 ml-auto whitespace-nowrap cursor-pointer"
+                    >
+                      Reset Filters
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
+
+            {(() => {
+              const baseList = (room.moviePool || []).filter((item) => {
+                if (!item) return false;
+                const query = rosterSearch.toLowerCase().trim();
+                if (query && !(item.title || "").toLowerCase().includes(query)) return false;
+
+                if (rosterRoleFilter === "ALL") return true;
+                if (rosterRoleFilter === "INDIAN") return !isOverseasPlayer(item);
+                if (rosterRoleFilter === "OVERSEAS") return isOverseasPlayer(item);
+
+                const r = (item.role || "").toUpperCase();
+                const c = (item.category || "").toUpperCase();
+                const g = (item.genre || "").toLowerCase();
+
+                if (rosterRoleFilter === "BATTER" || rosterRoleFilter === "BATSMAN") {
+                  return r === "BATTER" || c === "BATTERS" || g.includes("batter") || g.includes("batsman");
+                }
+                if (rosterRoleFilter === "BOWLER") {
+                  return r.includes("BOWLER") || c.includes("BOWLER") || c === "SPINNERS" || g.includes("bowler") || g.includes("pacer") || g.includes("spin");
+                }
+                if (rosterRoleFilter === "ALL_ROUNDER") {
+                  return r === "ALL_ROUNDER" || c === "ALL_ROUNDERS" || g.includes("all-rounder") || g.includes("all rounder");
+                }
+                if (rosterRoleFilter === "WICKETKEEPER") {
+                  return r === "WICKETKEEPER" || c === "WICKETKEEPERS" || g.includes("wicketkeeper") || g.includes("keeper");
+                }
+                return true;
+              });
+
+              const sorted = [...baseList].sort((a, b) => {
+                if (rosterSortBy === "PRICE_DESC") return (b.basePrice || 0) - (a.basePrice || 0);
+                if (rosterSortBy === "PRICE_ASC") return (a.basePrice || 0) - (b.basePrice || 0);
+                if (rosterSortBy === "NAME_ASC") return (a.title || "").localeCompare(b.title || "");
+                if (rosterSortBy === "NAME_DESC") return (b.title || "").localeCompare(a.title || "");
+                if (rosterSortBy === "RATING_DESC") return (b.imdbRating || 0) - (a.imdbRating || 0);
+                return 0;
+              });
+
+              if (sorted.length === 0) {
+                return (
+                  <div className="py-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                    <ListFilter size={28} className="text-muted-foreground/40" />
+                    <span>No {isCricket ? "cricketers" : "items"} match your search or filter.</span>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 max-h-[580px] overflow-y-auto pr-1.5">
+                  {sorted.map((item) => (
+                    <MovieCard key={item.id} movie={item} />
+                  ))}
+                </div>
+              );
+            })()}
           </section>
         )}
 
@@ -1608,30 +1773,37 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                     RECENT IPL STATS
                   </span>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs font-mono">
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">RUNS</span>
-                      <strong className="text-cream">{currentItem.stats?.runs ?? (currentItem.role?.includes("Bowler") ? 18 : 260)}</strong>
-                    </div>
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">S.R</span>
-                      <strong className="text-cyan-400">{currentItem.stats?.strikeRate ?? (currentItem.role?.includes("Bowler") ? 112 : 141)}</strong>
-                    </div>
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">H.S</span>
-                      <strong className="text-cream">{currentItem.stats?.highestScore ?? (currentItem.role?.includes("Bowler") ? "28*" : "89*")}</strong>
-                    </div>
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">WKTS</span>
-                      <strong className="text-gold">{currentItem.stats?.wickets ?? (currentItem.role?.includes("Bowler") ? 16 : 1)}</strong>
-                    </div>
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">B.AVG</span>
-                      <strong className="text-cream">{currentItem.stats?.wickets ? "22.5" : "—"}</strong>
-                    </div>
-                    <div className="flex justify-between border-b border-border/40 pb-1">
-                      <span className="text-muted-foreground text-[10px]">ECON</span>
-                      <strong className="text-cyan-400">{currentItem.stats?.economy ?? (currentItem.role?.includes("Bowler") ? "7.8" : "8.6")}</strong>
-                    </div>
+                    {(() => {
+                      const isBowler = Boolean(currentItem.role?.toLowerCase().includes("bowler"));
+                      return (
+                        <>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">RUNS</span>
+                            <strong className="text-cream">{currentItem.stats?.runs ?? (isBowler ? 18 : 260)}</strong>
+                          </div>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">S.R</span>
+                            <strong className="text-cyan-400">{currentItem.stats?.strikeRate ?? (isBowler ? 112 : 141)}</strong>
+                          </div>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">H.S</span>
+                            <strong className="text-cream">{currentItem.stats?.highestScore ?? (isBowler ? "28*" : "89*")}</strong>
+                          </div>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">WKTS</span>
+                            <strong className="text-gold">{currentItem.stats?.wickets ?? (isBowler ? 16 : 1)}</strong>
+                          </div>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">B.AVG</span>
+                            <strong className="text-cream">{currentItem.stats?.wickets ? "22.5" : "—"}</strong>
+                          </div>
+                          <div className="flex justify-between border-b border-border/40 pb-1">
+                            <span className="text-muted-foreground text-[10px]">ECON</span>
+                            <strong className="text-cyan-400">{currentItem.stats?.economy ?? (isBowler ? "7.8" : "8.6")}</strong>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 

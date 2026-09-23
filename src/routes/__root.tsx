@@ -20,13 +20,25 @@ function NotFoundComponent() {
         <p className="mt-2 text-sm text-muted-foreground">
           The page you're looking for doesn't exist or has been moved.
         </p>
-        <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/";
+            }}
+            className="inline-flex items-center justify-center rounded-xl bg-gold text-black font-black px-5 py-2.5 text-sm transition-all hover:brightness-110 shadow-lg cursor-pointer"
           >
             Go home
-          </Link>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/join";
+            }}
+            className="inline-flex items-center justify-center rounded-xl border border-border/80 bg-panel px-4 py-2.5 text-sm font-bold text-cream hover:border-gold/50 cursor-pointer"
+          >
+            Join Auction Room
+          </button>
         </div>
       </div>
     </div>
@@ -35,33 +47,40 @@ function NotFoundComponent() {
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error("Application Error:", error);
-  const router = useRouter();
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          This page didn't load
+        <h1 className="text-xl font-black tracking-tight text-foreground font-display">
+          This page encountered an issue
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
+        <p className="mt-2 text-xs sm:text-sm text-muted-foreground">
+          Something interrupted the view. You can reload the live auction or return home.
         </p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
+        <div className="mt-6 flex flex-wrap justify-center gap-2.5">
           <button
+            type="button"
             onClick={() => {
-              router.invalidate();
-              reset();
+              try {
+                reset();
+              } catch {
+                // ignore
+              }
+              window.location.reload();
             }}
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            className="inline-flex items-center justify-center rounded-xl bg-primary px-5 py-2.5 text-xs sm:text-sm font-black text-primary-foreground transition-all hover:bg-primary/90 shadow-md cursor-pointer"
           >
             Try again
           </button>
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/";
+            }}
+            className="inline-flex items-center justify-center rounded-xl border border-input bg-background px-5 py-2.5 text-xs sm:text-sm font-bold text-foreground transition-colors hover:bg-accent cursor-pointer"
           >
             Go home
-          </a>
+          </button>
         </div>
       </div>
     </div>

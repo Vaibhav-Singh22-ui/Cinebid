@@ -134,11 +134,29 @@ export function playChaChingSound() {
   }
 }
 
+const WINNING_SOUND_URL = "/winning-sound.mp3";
+const LOSING_SOUND_URL = "/losing_sound.mp3";
+
+function playAudioFile(url: string, onFallback: () => void) {
+  if (isMutedInMemory || typeof window === "undefined") return;
+  try {
+    const audio = new Audio(url);
+    audio.volume = 0.9;
+    const promise = audio.play();
+    if (promise !== undefined) {
+      promise.catch(() => {
+        onFallback();
+      });
+    }
+  } catch {
+    onFallback();
+  }
+}
+
 /**
- * Plays heavy gavel impact + victory chords when a player/movie is SOLD
+ * Plays heavy gavel impact + victory chords when a player/movie is SOLD (synthesized fallback)
  */
-export function playSoldCelebrationSound() {
-  if (isMutedInMemory) return;
+function playSoldCelebrationSynth() {
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -193,6 +211,14 @@ export function playSoldCelebrationSound() {
 }
 
 /**
+ * Plays victory/sold sound when a player is SOLD
+ */
+export function playSoldCelebrationSound() {
+  if (isMutedInMemory) return;
+  playAudioFile(WINNING_SOUND_URL, playSoldCelebrationSynth);
+}
+
+/**
  * Backward-compatible alias for playSoldCelebrationSound
  */
 export function playGavelWinSound() {
@@ -200,10 +226,9 @@ export function playGavelWinSound() {
 }
 
 /**
- * Funny sad trombone / clown horn ("wah-wah-wah-waaaah") when item goes UNSOLD
+ * Synthesized fallback for unsold sound
  */
-export function playUnsoldSadHornSound() {
-  if (isMutedInMemory) return;
+function playUnsoldSadHornSynth() {
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -241,6 +266,14 @@ export function playUnsoldSadHornSound() {
   } catch {
     // Ignore
   }
+}
+
+/**
+ * Plays losing sound when a player goes UNSOLD
+ */
+export function playUnsoldSadHornSound() {
+  if (isMutedInMemory) return;
+  playAudioFile(LOSING_SOUND_URL, playUnsoldSadHornSynth);
 }
 
 /**

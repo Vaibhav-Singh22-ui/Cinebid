@@ -1,0 +1,26 @@
+{
+  "package": "50_Millionaire_Antigravity_Implementation_Package",
+  "new_questions": 180,
+  "difficulty_distribution": {
+    "VERY_VERY_EASY": 60,
+    "VERY_EASY": 60,
+    "EASY": 60
+  },
+  "levels": {
+    "1": 60,
+    "2": 60,
+    "3": 60
+  },
+  "colors_each_level": {
+    "RED": 10,
+    "BLUE": 10,
+    "GREEN": 10,
+    "YELLOW": 10,
+    "PINK": 10,
+    "VIOLET": 10
+  },
+  "new_id_prefix": "MME180_",
+  "active": false,
+  "verification_status": "NEEDS_HUMAN_REVIEW",
+  "existing_bank_preserved": true
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  ArrowUpDown,
   Award,
   BookOpen,
   CheckCircle2,
@@ -221,37 +222,38 @@ export function Poster({ movie, className }: { movie: Movie | OwnedMovie; classN
             src={photoSrc}
             alt={`${movie.title} official cricketer photo`}
             referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
             loading="lazy"
             className="w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-105"
             onError={handleImageError}
           />
         ) : (
-          <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-black select-none border border-gold/30 rounded-2xl relative overflow-hidden shadow-2xl">
+          <div className="w-full h-full flex flex-col items-center justify-center p-2 text-center bg-gradient-to-b from-slate-950 via-slate-900 to-black select-none border border-gold/30 rounded-2xl relative overflow-hidden shadow-2xl">
             {/* Subtle atmospheric ambient glow */}
             <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-36 h-36 bg-gold/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute inset-0 bg-[radial-gradient(#ffffff08_1px,transparent_1px)] [background-size:14px_14px] opacity-30 pointer-events-none" />
 
             {/* Clean Monogram Crest */}
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-black/60 border border-gold/40 flex flex-col items-center justify-center shadow-lg mb-2.5 relative z-10 backdrop-blur-sm">
-              <span className="text-xl sm:text-2xl font-black text-gold font-display tracking-wider leading-none">
-                {movie.title
-                  .split(" ")
-                  .map((w) => w[0])
+            <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl bg-black/60 border border-gold/40 flex flex-col items-center justify-center shadow-lg mb-1.5 relative z-10 backdrop-blur-sm">
+              <span className="text-sm sm:text-xl font-black text-gold font-display tracking-wider leading-none">
+                {(movie.title || "")
+                  .trim()
+                  .split(/\s+/)
+                  .map((w) => w[0] || "")
+                  .filter(Boolean)
                   .slice(0, 2)
                   .join("")
-                  .toUpperCase()}
+                  .toUpperCase() || "CR"}
               </span>
             </div>
 
             {/* Clean Player Name */}
-            <h3 className="text-sm sm:text-base font-black text-cream font-display uppercase tracking-wide leading-snug max-w-[90%] relative z-10">
+            <h3 className="text-xs sm:text-sm font-black text-cream font-display uppercase tracking-wide leading-tight max-w-[95%] truncate relative z-10">
               {movie.title}
             </h3>
 
             {/* Subtle category line */}
-            <div className="flex items-center gap-1.5 mt-2 text-[10px] text-muted-foreground relative z-10">
-              <span className="text-cream/80 font-semibold">{roleBadge.fullLabel || roleBadge.label}</span>
+            <div className="flex items-center gap-1 mt-1 text-[9px] sm:text-[10px] text-muted-foreground relative z-10">
+              <span className="text-cream/80 font-semibold truncate max-w-[90px]">{roleBadge.label}</span>
               <span>•</span>
               <span className="text-gold/90 font-mono font-semibold">
                 {isOverseas ? (movie.country || "Overseas") : "India"}
@@ -925,6 +927,7 @@ export function AuctionTopTabs({
   const [selectedSquadPlayerId, setSelectedSquadPlayerId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("ALL");
+  const [sortBy, setSortBy] = useState<"DEFAULT" | "PRICE_DESC" | "PRICE_ASC" | "NAME_ASC" | "NAME_DESC" | "RATING_DESC">("DEFAULT");
   const [muted, setMuted] = useState(isAudioMuted());
   const [customSecInput, setCustomSecInput] = useState("10");
 
@@ -933,40 +936,117 @@ export function AuctionTopTabs({
     setMuted(next);
   };
 
+  const safePool = moviePool || [];
+  const safePlayers = players || [];
+
   // Compile Sold items map
   const soldMap = new Map<string, { movie: OwnedMovie; buyerName: string; price: number }>();
-  for (const p of (players || [])) {
-    for (const m of (p.movies || [])) {
-      soldMap.set(m.id, {
-        movie: m,
-        buyerName: p.name,
-        price: m.purchasePrice || m.basePrice,
-      });
+  for (const p of safePlayers) {
+    for (const m of (p?.movies || [])) {
+      if (m && m.id) {
+        soldMap.set(m.id, {
+          movie: m,
+          buyerName: p.name || "Franchise",
+          price: m.purchasePrice ?? m.basePrice ?? 0,
+        });
+      }
     }
   }
   const soldList = Array.from(soldMap.values());
 
   // Compile Unsold items (items before current index that were passed)
-  const unsoldList = moviePool
-    .slice(0, currentMovieIndex)
-    .filter((m) => !soldMap.has(m.id));
+  const unsoldList = safePool
+    .slice(0, Math.max(0, currentMovieIndex))
+    .filter((m) => m && !soldMap.has(m.id));
 
-  // Upcoming items
-  const upcomingList = moviePool.slice(currentMovieIndex + 1);
+  // Upcoming items (items after current index, or all items if in lobby mode)
+  const isLobby = currentMovieIndex === 0 && soldMap.size === 0 && unsoldList.length === 0;
+  const upcomingList = isLobby
+    ? safePool
+    : safePool.slice(Math.max(0, currentMovieIndex + 1));
 
   // Filter helper for modal list
-  const filterItem = (m: Movie | OwnedMovie) => {
-    const titleMatch = m.title.toLowerCase().includes(searchQuery.toLowerCase().trim());
-    if (!titleMatch) return false;
+  const filterItem = (m: Movie | OwnedMovie | undefined | null) => {
+    if (!m) return false;
+    const title = (m.title || "").toLowerCase();
+    const query = searchQuery.toLowerCase().trim();
+    if (query && !title.includes(query)) return false;
 
     if (roleFilter === "ALL") return true;
     if (roleFilter === "INDIAN") return !isOverseasPlayer(m);
     if (roleFilter === "OVERSEAS") return isOverseasPlayer(m);
-    if (roleFilter === "BATSMAN") return m.role?.includes("Batsman");
-    if (roleFilter === "BOWLER") return m.role?.includes("Bowler");
-    if (roleFilter === "ALL_ROUNDER") return m.role?.includes("All-Rounder");
-    if (roleFilter === "WICKETKEEPER") return m.role?.includes("Wicketkeeper");
+
+    const r = (m.role || "").toUpperCase();
+    const c = (m.category || "").toUpperCase();
+    const g = (m.genre || "").toLowerCase();
+
+    if (roleFilter === "BATTER" || roleFilter === "BATSMAN") {
+      return r === "BATTER" || c === "BATTERS" || g.includes("batter") || g.includes("batsman");
+    }
+    if (roleFilter === "BOWLER") {
+      return r.includes("BOWLER") || c.includes("BOWLER") || c === "SPINNERS" || g.includes("bowler") || g.includes("pacer") || g.includes("spin");
+    }
+    if (roleFilter === "FAST_BOWLER") {
+      return r === "FAST_BOWLER" || c === "FAST_BOWLERS" || g.includes("fast") || g.includes("pacer");
+    }
+    if (roleFilter === "SPIN_BOWLER") {
+      return r === "SPIN_BOWLER" || c === "SPINNERS" || g.includes("spin");
+    }
+    if (roleFilter === "ALL_ROUNDER") {
+      return r === "ALL_ROUNDER" || c === "ALL_ROUNDERS" || g.includes("all-rounder") || g.includes("all rounder");
+    }
+    if (roleFilter === "WICKETKEEPER") {
+      return r === "WICKETKEEPER" || c === "WICKETKEEPERS" || g.includes("wicketkeeper") || g.includes("keeper");
+    }
     return true;
+  };
+
+  const sortItems = <T extends Movie | OwnedMovie>(items: T[]): T[] => {
+    const list = [...items];
+    if (sortBy === "PRICE_DESC") {
+      return list.sort((a, b) => {
+        const pA = ("purchasePrice" in a && a.purchasePrice != null) ? a.purchasePrice : (a.basePrice || 0);
+        const pB = ("purchasePrice" in b && b.purchasePrice != null) ? b.purchasePrice : (b.basePrice || 0);
+        return pB - pA;
+      });
+    }
+    if (sortBy === "PRICE_ASC") {
+      return list.sort((a, b) => {
+        const pA = ("purchasePrice" in a && a.purchasePrice != null) ? a.purchasePrice : (a.basePrice || 0);
+        const pB = ("purchasePrice" in b && b.purchasePrice != null) ? b.purchasePrice : (b.basePrice || 0);
+        return pA - pB;
+      });
+    }
+    if (sortBy === "NAME_ASC") {
+      return list.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    }
+    if (sortBy === "NAME_DESC") {
+      return list.sort((a, b) => (b.title || "").localeCompare(a.title || ""));
+    }
+    if (sortBy === "RATING_DESC") {
+      return list.sort((a, b) => (b.imdbRating || 0) - (a.imdbRating || 0));
+    }
+    return list;
+  };
+
+  const sortSold = (items: { movie: OwnedMovie; buyerName: string; price: number }[]) => {
+    const list = [...items];
+    if (sortBy === "PRICE_DESC") {
+      return list.sort((a, b) => (b.price || 0) - (a.price || 0));
+    }
+    if (sortBy === "PRICE_ASC") {
+      return list.sort((a, b) => (a.price || 0) - (b.price || 0));
+    }
+    if (sortBy === "NAME_ASC") {
+      return list.sort((a, b) => (a.movie.title || "").localeCompare(b.movie.title || ""));
+    }
+    if (sortBy === "NAME_DESC") {
+      return list.sort((a, b) => (b.movie.title || "").localeCompare(a.movie.title || ""));
+    }
+    if (sortBy === "RATING_DESC") {
+      return list.sort((a, b) => (b.movie.imdbRating || 0) - (a.movie.imdbRating || 0));
+    }
+    return list;
   };
 
   return (
@@ -1044,9 +1124,9 @@ export function AuctionTopTabs({
             }`}
           >
             <ListFilter size={13} />
-            <span>{isCricket ? "All 58 Players" : "All Films"}</span>
+            <span>{isCricket ? `All ${safePool.length} Players` : `All ${safePool.length} Films`}</span>
             <span className="px-1.5 py-0.2 rounded-full bg-black/60 text-gold text-[10px] font-mono font-black border border-gold/30">
-              {moviePool.length}
+              {safePool.length}
             </span>
           </button>
 
@@ -1122,7 +1202,7 @@ export function AuctionTopTabs({
 
       {/* POP-UP MODAL DIALOG */}
       <Dialog open={Boolean(activeTab)} onOpenChange={(open) => !open && setActiveTab(null)}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-6 bg-panel/95 border-gold/40 text-cream backdrop-blur-xl">
+        <DialogContent className="max-w-5xl w-[95vw] max-h-[88vh] flex flex-col p-4 sm:p-6 bg-panel/95 border-gold/40 text-cream backdrop-blur-xl">
           <DialogHeader className="border-b border-border/80 pb-3 flex-shrink-0 text-left">
             <DialogTitle className="text-xl font-black text-cream font-display flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -1445,178 +1525,279 @@ export function AuctionTopTabs({
           ) : (
             /* LIST CONTENT (SOLD, UNSOLD, UPCOMING, ALL) */
             <div className="flex-1 flex flex-col min-h-0 gap-3 pt-2">
-              {/* Search & Filter Bar */}
-              <div className="flex flex-col sm:flex-row items-center gap-2 flex-shrink-0">
-                <div className="relative flex-1 w-full">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={`Search ${isCricket ? "cricketer" : "film"} by name...`}
-                    className="w-full bg-black/60 border border-border/80 rounded-xl pl-9 pr-3 py-2 text-xs text-cream outline-none focus:border-gold"
-                  />
+              {/* Search, Filter & Sort Bar */}
+              <div className="flex flex-col gap-2 flex-shrink-0 border-b border-border/60 pb-3">
+                <div className="flex flex-col sm:flex-row items-center gap-2">
+                  <div className="relative flex-1 w-full">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={`Search ${isCricket ? "cricketer" : "film"} by name...`}
+                      className="w-full bg-black/60 border border-border/80 rounded-xl pl-9 pr-8 py-2 text-xs text-cream outline-none focus:border-gold"
+                    />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-cream text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Sort By Dropdown */}
+                  <div className="flex items-center gap-1.5 w-full sm:w-auto justify-between sm:justify-start bg-black/50 border border-border/80 rounded-xl px-3 py-1.5 shadow-inner">
+                    <div className="flex items-center gap-1.5 text-gold">
+                      <ArrowUpDown size={13} />
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Sort:</span>
+                    </div>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as any)}
+                      className="bg-transparent text-cream text-xs font-bold outline-none cursor-pointer pr-1"
+                    >
+                      <option value="DEFAULT" className="bg-panel text-cream">Auction Order</option>
+                      <option value="PRICE_DESC" className="bg-panel text-cream">Price: High → Low</option>
+                      <option value="PRICE_ASC" className="bg-panel text-cream">Price: Low → High</option>
+                      <option value="NAME_ASC" className="bg-panel text-cream">Name: A → Z</option>
+                      <option value="NAME_DESC" className="bg-panel text-cream">Name: Z → A</option>
+                      <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                    </select>
+                  </div>
                 </div>
 
+                {/* Role & Nationality Filter Chips */}
                 {isCricket && (
-                  <div className="flex items-center gap-1 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0 scrollbar-none">
-                    {["ALL", "BATSMAN", "BOWLER", "ALL_ROUNDER", "WICKETKEEPER", "INDIAN", "OVERSEAS"].map((role) => (
+                  <div className="flex items-center gap-1 overflow-x-auto w-full pb-1 scrollbar-none">
+                    {[
+                      { id: "ALL", label: "All" },
+                      { id: "BATTER", label: "Batters" },
+                      { id: "BOWLER", label: "Bowlers" },
+                      { id: "ALL_ROUNDER", label: "All-Rounders" },
+                      { id: "WICKETKEEPER", label: "Keepers" },
+                      { id: "INDIAN", label: "🇮🇳 Indian" },
+                      { id: "OVERSEAS", label: "✈️ Overseas" },
+                    ].map((chip) => (
                       <button
-                        key={role}
+                        key={chip.id}
                         type="button"
-                        onClick={() => setRoleFilter(role)}
-                        className={`text-[10px] px-2 py-1 rounded-lg border font-bold uppercase transition-all whitespace-nowrap cursor-pointer ${
-                          roleFilter === role
-                            ? "bg-gold text-black border-gold"
-                            : "bg-black/40 border-border text-muted-foreground hover:text-cream"
+                        onClick={() => setRoleFilter(chip.id)}
+                        className={`text-[10px] px-2.5 py-1 rounded-lg border font-bold transition-all whitespace-nowrap cursor-pointer ${
+                          roleFilter === chip.id
+                            ? "bg-gold text-black border-gold shadow-sm font-black"
+                            : "bg-black/40 border-border text-muted-foreground hover:text-cream hover:border-gold/40"
                         }`}
                       >
-                        {role.replace("_", " ")}
+                        {chip.label}
                       </button>
                     ))}
+                    {(roleFilter !== "ALL" || searchQuery) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRoleFilter("ALL");
+                          setSearchQuery("");
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2 py-1 ml-auto whitespace-nowrap cursor-pointer"
+                      >
+                        Reset Filters
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
 
               {/* Items Grid */}
               <div className="flex-1 overflow-y-auto pr-1">
-                {activeTab === "SOLD" && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {soldList.filter((item) => filterItem(item.movie)).length === 0 ? (
-                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
-                        No sold items match this filter yet.
+                {activeTab === "SOLD" && (() => {
+                  const items = sortSold(soldList.filter((item) => filterItem(item.movie)));
+                  if (items.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                        <Gavel size={28} className="text-muted-foreground/40" />
+                        <span>No sold items match this search or filter.</span>
+                        {(roleFilter !== "ALL" || searchQuery) && (
+                          <button
+                            type="button"
+                            onClick={() => { setRoleFilter("ALL"); setSearchQuery(""); }}
+                            className="text-gold text-xs underline cursor-pointer"
+                          >
+                            Clear filters
+                          </button>
+                        )}
                       </div>
-                    ) : (
-                      soldList
-                        .filter((item) => filterItem(item.movie))
-                        .map(({ movie, buyerName, price }) => (
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {items.map(({ movie, buyerName, price }) => (
+                        <div
+                          key={movie.id}
+                          className="p-3 rounded-2xl bg-black/50 border border-emerald-500/40 flex items-center gap-3 shadow-md hover:border-emerald-400 transition-colors"
+                        >
+                          <div className="w-14 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-black border border-border/60">
+                            <Poster movie={movie} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="flex flex-col min-w-0 text-left flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                              {isOverseasPlayer(movie) && <span className="text-[10px]">✈️</span>}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                            <div className="mt-2 flex items-center justify-between text-[11px] gap-2 pt-1 border-t border-border/40">
+                              <span className="text-emerald-400 font-bold truncate">Acquired: {buyerName}</span>
+                              <span className="text-gold font-black font-mono text-xs">{formatCr(price)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {activeTab === "UNSOLD" && (() => {
+                  const items = sortItems(unsoldList.filter(filterItem));
+                  if (items.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                        <XCircle size={28} className="text-muted-foreground/40" />
+                        <span>{unsoldList.length === 0 ? "No unsold items so far! Every auctioned lot was acquired." : "No unsold items match your filter."}</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {items.map((movie) => (
+                        <div
+                          key={movie.id}
+                          className="p-3 rounded-2xl bg-black/50 border border-red-500/40 flex items-center gap-3 shadow-md hover:border-red-400 transition-colors"
+                        >
+                          <div className="w-14 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-black border border-border/60">
+                            <Poster movie={movie} className="w-full h-full object-cover" />
+                          </div>
+                          <div className="flex flex-col min-w-0 text-left flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                              {isOverseasPlayer(movie) && <span className="text-[10px]">✈️</span>}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
+                            <div className="mt-2 flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
+                              <span className="text-red-400 font-bold text-[10px] uppercase">Unsold / Passed</span>
+                              <span className="text-muted-foreground font-mono text-xs font-bold">Base: {formatCr(movie.basePrice)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+
+                {activeTab === "UPCOMING" && (() => {
+                  const items = sortItems(upcomingList.filter(filterItem));
+                  if (items.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                        <Clock size={28} className="text-muted-foreground/40" />
+                        <span>No upcoming items match this filter.</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {items.map((movie) => {
+                        const originalLotNum = safePool.findIndex((m) => m.id === movie.id) + 1;
+                        return (
                           <div
                             key={movie.id}
-                            className="p-3 rounded-2xl bg-black/50 border border-emerald-500/40 flex items-center gap-3"
+                            className="p-3 rounded-2xl bg-black/50 border border-border/80 hover:border-cyan-500/60 flex items-center gap-3 shadow-md transition-colors"
                           >
-                            <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
+                            <div className="w-14 h-20 rounded-xl overflow-hidden flex-shrink-0 bg-black border border-border/60">
                               <Poster movie={movie} className="w-full h-full object-cover" />
                             </div>
-                            <div className="flex flex-col min-w-0 text-left">
-                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                            <div className="flex flex-col min-w-0 text-left flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono font-bold border border-cyan-800/40">
+                                  Lot #{originalLotNum}
+                                </span>
+                                <span className="text-xs font-black text-cream truncate">{movie.title}</span>
+                                {isOverseasPlayer(movie) && <span className="text-[10px]">✈️</span>}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground truncate mt-0.5">{movie.role || movie.genre}</span>
+                              <div className="mt-2 flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
+                                <span className="text-gold font-bold font-mono text-xs">Base: {formatCr(movie.basePrice)}</span>
+                                {movie.stats?.strikeRate ? (
+                                  <span className="text-[10px] text-cyan-300 font-mono">SR {movie.stats.strikeRate}</span>
+                                ) : movie.stats?.economy ? (
+                                  <span className="text-[10px] text-emerald-300 font-mono">Econ {movie.stats.economy}</span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
+                {activeTab === "ALL" && (() => {
+                  const items = sortItems(safePool.filter(filterItem));
+                  if (items.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-2">
+                        <ListFilter size={28} className="text-muted-foreground/40" />
+                        <span>No items in the catalogue match your query.</span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                      {items.map((movie) => {
+                        const isSold = soldMap.has(movie.id);
+                        const soldData = soldMap.get(movie.id);
+                        return (
+                          <div
+                            key={movie.id}
+                            className={`p-2.5 rounded-2xl border flex flex-col gap-2 relative text-left transition-all ${
+                              isSold
+                                ? "bg-black/40 border-emerald-500/40 hover:border-emerald-400"
+                                : "bg-black/60 border-border/70 hover:border-gold/50"
+                            }`}
+                          >
+                            <div className="aspect-[3/4] w-full rounded-xl overflow-hidden bg-black relative">
+                              <Poster movie={movie} className="w-full h-full object-cover" />
+                              {isSold && (
+                                <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 text-emerald-400 border border-emerald-500/50 text-[10px] font-black uppercase tracking-wider">
+                                    SOLD
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <strong className="text-xs font-bold text-cream truncate">{movie.title}</strong>
                               <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
-                              <div className="mt-1 flex items-center justify-between text-[11px] gap-2">
-                                <span className="text-emerald-400 font-bold truncate">Acquired by {buyerName}</span>
-                                <span className="text-gold font-black font-mono">{formatCr(price)}</span>
+                              <div className="mt-1 flex items-center justify-between text-[10px] pt-1 border-t border-border/30">
+                                <span className="text-gold font-bold">{formatCr(movie.basePrice)}</span>
+                                {isSold && soldData ? (
+                                  <span className="text-emerald-400 font-bold truncate max-w-[80px]" title={`Acquired by ${soldData.buyerName}`}>
+                                    {soldData.buyerName}
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground text-[9px] font-mono">
+                                    {movie.imdbRating ? `${movie.imdbRating}★` : ""}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
-                        ))
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "UNSOLD" && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {unsoldList.filter(filterItem).length === 0 ? (
-                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
-                        No unsold items so far! Every auctioned item received bids.
-                      </div>
-                    ) : (
-                      unsoldList.filter(filterItem).map((movie) => (
-                        <div
-                          key={movie.id}
-                          className="p-3 rounded-2xl bg-black/50 border border-red-500/40 flex items-center gap-3"
-                        >
-                          <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
-                            <Poster movie={movie} className="w-full h-full object-cover" />
-                          </div>
-                          <div className="flex flex-col min-w-0 text-left">
-                            <span className="text-xs font-black text-cream truncate">{movie.title}</span>
-                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
-                            <div className="mt-1 flex items-center justify-between text-[11px]">
-                              <span className="text-red-400 font-bold">Unsold / Passed</span>
-                              <span className="text-muted-foreground font-mono">Base: {formatCr(movie.basePrice)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "UPCOMING" && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                    {upcomingList.filter(filterItem).length === 0 ? (
-                      <div className="col-span-full py-12 text-center text-xs text-muted-foreground">
-                        No upcoming items match this filter.
-                      </div>
-                    ) : (
-                      upcomingList.filter(filterItem).map((movie, idx) => (
-                        <div
-                          key={movie.id}
-                          className="p-3 rounded-2xl bg-black/50 border border-border/80 hover:border-cyan-500/50 flex items-center gap-3"
-                        >
-                          <div className="w-12 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-black">
-                            <Poster movie={movie} className="w-full h-full object-cover" />
-                          </div>
-                          <div className="flex flex-col min-w-0 text-left">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 font-mono">
-                                In {idx + 1}
-                              </span>
-                              <span className="text-xs font-black text-cream truncate">{movie.title}</span>
-                            </div>
-                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
-                            <div className="mt-1 flex items-center justify-between text-[11px]">
-                              <span className="text-gold font-bold font-mono">Base: {formatCr(movie.basePrice)}</span>
-                              {movie.stats?.strikeRate && (
-                                <span className="text-[10px] text-cyan-300 font-mono">SR: {movie.stats.strikeRate}</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                )}
-
-                {activeTab === "ALL" && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                    {moviePool.filter(filterItem).map((movie) => {
-                      const isSold = soldMap.has(movie.id);
-                      const soldData = soldMap.get(movie.id);
-                      return (
-                        <div
-                          key={movie.id}
-                          className={`p-2.5 rounded-2xl border flex flex-col gap-2 relative text-left ${
-                            isSold
-                              ? "bg-black/40 border-emerald-500/40"
-                              : "bg-black/60 border-border/70 hover:border-gold/50"
-                          }`}
-                        >
-                          <div className="aspect-[3/4] w-full rounded-xl overflow-hidden bg-black relative">
-                            <Poster movie={movie} className="w-full h-full object-cover" />
-                            {isSold && (
-                              <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
-                                <span className="px-2 py-0.5 rounded-md bg-emerald-950/90 text-emerald-400 border border-emerald-500/50 text-[10px] font-black uppercase">
-                                  SOLD
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-col min-w-0">
-                            <strong className="text-xs font-bold text-cream truncate">{movie.title}</strong>
-                            <span className="text-[10px] text-muted-foreground truncate">{movie.role || movie.genre}</span>
-                            <div className="mt-1 flex items-center justify-between text-[10px]">
-                              <span className="text-gold font-bold">{formatCr(movie.basePrice)}</span>
-                              {isSold && soldData && (
-                                <span className="text-emerald-400 font-bold truncate max-w-[80px]">
-                                  {soldData.buyerName}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}

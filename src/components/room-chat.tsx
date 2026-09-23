@@ -63,6 +63,7 @@ function getSenderPalette(name: string) {
   }
   const index = Math.abs(hash) % AVATAR_PALETTES.length;
   return AVATAR_PALETTES[index] || AVATAR_PALETTES[0]!;
+  
 }
 
 function getInitials(name: string): string {
