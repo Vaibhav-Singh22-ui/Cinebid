@@ -1491,6 +1491,19 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const currentItem = room.moviePool[room.currentMovieIndex] || room.moviePool[0];
   if (!currentItem) return null;
 
+  const defaultStartingBudget = room.settings?.startingBudget || 100;
+
+  // Sanitize all players in room to eliminate undefined, null, NaN or unrounded float budgets
+  for (const p of room.players) {
+    if (typeof p.budget !== "number" || isNaN(p.budget)) {
+      p.budget = defaultStartingBudget;
+    }
+    p.budget = Math.round(p.budget * 100) / 100;
+    if (typeof p.initialBudget !== "number" || isNaN(p.initialBudget)) {
+      p.initialBudget = defaultStartingBudget;
+    }
+  }
+
   let me = room.players.find((p) => p.id === currentUser.id);
   if (!me) {
     me = room.players.find((p) => p.name.toLowerCase() === currentUser.name.toLowerCase());
@@ -1499,8 +1512,8 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     me = {
       id: currentUser.id,
       name: currentUser.name || "Franchise Owner",
-      budget: room.settings?.startingBudget || 100,
-      initialBudget: room.settings?.startingBudget || 100,
+      budget: defaultStartingBudget,
+      initialBudget: defaultStartingBudget,
       movies: [],
       isHost: false,
       isBot: false,
@@ -1508,6 +1521,14 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
       color: currentUser.color || "#2563eb",
       ready: true,
     };
+  } else {
+    if (typeof me.budget !== "number" || isNaN(me.budget)) {
+      me.budget = defaultStartingBudget;
+    }
+    me.budget = Math.round(me.budget * 100) / 100;
+    if (typeof me.initialBudget !== "number" || isNaN(me.initialBudget)) {
+      me.initialBudget = defaultStartingBudget;
+    }
   }
 
   const isHost = room.hostId === currentUser.id;
@@ -2961,13 +2982,19 @@ export function IplTournamentHub({
     return initializeIplTournament(room.roomCode, room.players, room.submittedSlates || {});
   });
 
-  const [activeTab, setActiveTab] = useState<"MATCHES" | "STANDINGS" | "PLAYOFFS" | "PODIUM" | "EVALUATION">("MATCHES");
+  const [activeTab, setActiveTab] = useState<"MATCHES" | "STANDINGS" | "PLAYOFFS" | "PODIUM" | "EVALUATION">(() => {
+    if (room.tournamentData?.isCompleted) return "PODIUM";
+    return "MATCHES";
+  });
   const [selectedMatch, setSelectedMatch] = useState<MatchFixture | null>(null);
   const [simulating, setSimulating] = useState(false);
 
   useEffect(() => {
     if (room.tournamentData) {
       setTournament(room.tournamentData);
+      if (room.tournamentData.isCompleted) {
+        setActiveTab("PODIUM");
+      }
     }
   }, [room.tournamentData]);
 
@@ -2978,7 +3005,7 @@ export function IplTournamentHub({
   const isHost = room.hostId === currentUser?.id;
 
   const handleSimulateNext = async () => {
-    if (!isHost || nextUnplayedIdx === -1 || simulating) return;
+    if (nextUnplayedIdx === -1 || simulating) return;
     setSimulating(true);
     playDramaticTickSound(1);
 
@@ -3002,19 +3029,34 @@ export function IplTournamentHub({
   };
 
   const handleSimulateAll = async () => {
-    if (!isHost || simulating) return;
+    if (simulating) return;
     setSimulating(true);
 
     try {
       let curr = tournament;
-      while (true) {
-        const nextIdx = curr.fixtures.findIndex((f) => !f.isPlayed);
+      let iterations = 0;
+      const maxIterations = Math.max(10, (curr.fixtures.length || 1) * 3);
+
+      while (!curr.isCompleted && iterations < maxIterations) {
+        iterations++;
+        // Prioritize fixture that already has both teams assigned
+        let nextIdx = curr.fixtures.findIndex((f) => !f.isPlayed && Boolean(f.team1Id && f.team2Id));
+        if (nextIdx === -1) {
+          nextIdx = curr.fixtures.findIndex((f) => !f.isPlayed);
+        }
         if (nextIdx === -1) break;
-        curr = await simulateMatch(curr, nextIdx);
+
+        const updated = await simulateMatch(curr, nextIdx);
+        // Break if no progress was made to prevent any infinite freeze
+        if (updated === curr && !updated.fixtures[nextIdx]?.isPlayed) {
+          break;
+        }
+        curr = updated;
         setTournament(curr);
         saveTournamentState(room.roomCode, curr);
         if (curr.isCompleted) break;
       }
+
       playSoldCelebrationSound();
       playMemeAirhornSound();
       setActiveTab("PODIUM");
@@ -3064,47 +3106,52 @@ export function IplTournamentHub({
           </p>
         </div>
 
-        {/* Action Controls - HOST ONLY */}
+        {/* Action Controls */}
         <div className="flex items-center gap-2.5 flex-wrap relative z-10">
-          {isHost ? (
-            <>
-              {!isCompleted && nextFixture && (
-                <button
-                  type="button"
-                  onClick={handleSimulateNext}
-                  disabled={simulating}
-                  className="btn btn-primary px-5 py-3 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-xl shadow-gold/25 hover:brightness-110 flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  {simulating ? <LoaderCircle size={15} className="animate-spin" /> : <Play size={15} />}
-                  <span>Simulate Next ({nextFixture.stageName})</span>
-                </button>
-              )}
+          {!isCompleted && nextFixture && isHost && (
+            <button
+              type="button"
+              onClick={handleSimulateNext}
+              disabled={simulating}
+              className="btn btn-primary px-5 py-3 rounded-2xl bg-gradient-to-r from-gold to-amber-500 text-black font-display font-black text-xs uppercase tracking-wider shadow-xl shadow-gold/25 hover:brightness-110 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {simulating ? <LoaderCircle size={15} className="animate-spin" /> : <Play size={15} />}
+              <span>Simulate Next ({nextFixture.stageName})</span>
+            </button>
+          )}
 
-              {!isCompleted && (
-                <button
-                  type="button"
-                  onClick={handleSimulateAll}
-                  disabled={simulating}
-                  className="px-4 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  <Zap size={14} /> Simulate All
-                </button>
-              )}
+          {!isCompleted && (
+            <button
+              type="button"
+              onClick={handleSimulateAll}
+              disabled={simulating}
+              className="px-4 py-3 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider shadow-lg flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {simulating ? <LoaderCircle size={14} className="animate-spin" /> : <Zap size={14} />}
+              <span>{isHost ? "Simulate All Matches" : "Auto-Run Tournament"}</span>
+            </button>
+          )}
 
-              <button
-                type="button"
-                onClick={handleResetTournament}
-                className="px-3.5 py-3 rounded-2xl border border-border/80 hover:border-gold/40 text-cream text-xs font-bold flex items-center gap-1.5 bg-black/40 cursor-pointer"
-                title="Re-simulate from start"
-              >
-                <RotateCcw size={14} /> Reset
-              </button>
-            </>
-          ) : (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-black/60 border border-gold/40 text-gold text-xs font-bold shadow-lg">
-              <Shield size={16} className="text-gold animate-pulse" />
-              <span>Live Spectator • Host controls match simulation</span>
-            </div>
+          {isHost && (
+            <button
+              type="button"
+              onClick={handleResetTournament}
+              className="px-3.5 py-3 rounded-2xl border border-border/80 hover:border-gold/40 text-cream text-xs font-bold flex items-center gap-1.5 bg-black/40 cursor-pointer"
+              title="Re-simulate from start"
+            >
+              <RotateCcw size={14} /> Reset
+            </button>
+          )}
+
+          {isCompleted && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("PODIUM")}
+              className="flex items-center gap-2 px-4 py-3 rounded-2xl bg-gold/20 hover:bg-gold/30 border border-gold/50 text-gold text-xs font-black shadow-lg cursor-pointer transition-all"
+            >
+              <Trophy size={16} className="text-gold animate-bounce" />
+              <span>🏆 View Championship Podium & Caps</span>
+            </button>
           )}
         </div>
       </div>

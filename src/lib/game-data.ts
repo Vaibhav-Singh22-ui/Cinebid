@@ -99,7 +99,13 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   auctionType: "CINEMA",
 };
 
-export const formatCr = (amount: number) => `₹${amount} Cr`;
+export const formatCr = (amount: number | null | undefined): string => {
+  if (amount === null || amount === undefined || typeof amount !== "number" || isNaN(amount)) {
+    return "₹0.00 Cr";
+  }
+  const rounded = Math.round(amount * 100) / 100;
+  return rounded % 1 === 0 ? `₹${rounded} Cr` : `₹${rounded.toFixed(2)} Cr`;
+};
 
 /**
  * Computes an optimal 5-movie studio slate by ranking IMDb rating and box office power

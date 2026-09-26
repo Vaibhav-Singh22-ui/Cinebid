@@ -97,7 +97,20 @@ export interface TournamentState {
 
 const GROQ_API_KEY = import.meta.env["VITE_GROQ_API_KEY"] || "";
 const OPENAI_API_KEY = import.meta.env["VITE_OPENAI_API_KEY"] || "";
-const BACKUP_AI_KEY = import.meta.env["VITE_GEMINI_API_KEY"] || "";
+const BACKUP_AI_KEY = import.meta.env["VITE_GEMINI_API_KEY"] || import.meta.env["VITE_BACKUP_AI_KEY"] || "";
+
+/**
+ * Fetch helper with timeout to avoid stalling match simulations
+ */
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 2500): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * Initializes an IPL tournament schedule from submitted team lineups
@@ -137,6 +150,45 @@ export function initializeIplTournament(
       playing11,
     };
   });
+
+  // Safe fallback for solo/testing room: add an IPL All-Stars rival franchise
+  if (teams.length === 1) {
+    const aiRival: TeamLineup = {
+      teamId: "ai-rival-allstars",
+      teamName: "IPL All-Stars XI",
+      avatar: "🏏",
+      color: "#FF5722",
+      isHost: false,
+      playing11: [
+        { id: "ai-p1", title: "Virat Kohli", role: "Batsman", rating: 94, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p2", title: "Rohit Sharma", role: "Batsman", rating: 92, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p3", title: "Suryakumar Yadav", role: "Batsman", rating: 91, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p4", title: "Heinrich Klaasen", role: "Wicketkeeper", rating: 90, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p5", title: "Hardik Pandya", role: "All-Rounder", rating: 89, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p6", title: "Andre Russell", role: "All-Rounder", rating: 90, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p7", title: "Rashid Khan", role: "Bowler", rating: 95, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p8", title: "Jasprit Bumrah", role: "Bowler", rating: 96, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p9", title: "Trent Boult", role: "Bowler", rating: 88, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p10", title: "Yuzvendra Chahal", role: "Bowler", rating: 87, basePrice: 2, currentBid: 2, status: "sold" },
+        { id: "ai-p11", title: "Arshdeep Singh", role: "Bowler", rating: 86, basePrice: 2, currentBid: 2, status: "sold" },
+      ],
+    };
+    teams.push(aiRival);
+  }
+
+  // Safe fallback if 0 teams
+  if (teams.length === 0) {
+    return {
+      roomCode,
+      format: "BEST_OF_3",
+      teams: [],
+      fixtures: [],
+      pointsTable: [],
+      currentMatchIndex: 0,
+      isCompleted: true,
+      championTeamName: "No Teams",
+    };
+  }
 
   // 2. Initialize Points Table
   const pointsTable: PointsTableEntry[] = teams.map((t) => ({
@@ -331,20 +383,129 @@ export function initializeIplTournament(
 }
 
 /**
+ * Helper to auto-populate playoff matchups once prior rounds complete
+ */
+function populatePlayoffs(
+  fixtures: MatchFixture[],
+  pointsTable: PointsTableEntry[],
+  format: "IPL_4_PLUS" | "TRIANGULAR" | "BEST_OF_3",
+): MatchFixture[] {
+  const nextFixtures = [...fixtures];
+  const isLeagueComplete = nextFixtures
+    .filter((f) => f.stage === "LEAGUE")
+    .every((f) => f.isPlayed);
+
+  if (isLeagueComplete && format === "IPL_4_PLUS") {
+    // Sort standings by points desc, then NRR desc
+    const sorted = [...pointsTable].sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      return b.nrr - a.nrr;
+    });
+
+    const rank1 = sorted[0];
+    const rank2 = sorted[1];
+    const rank3 = sorted[2];
+    const rank4 = sorted[3];
+
+    // Populate Qualifier 1
+    const q1Idx = nextFixtures.findIndex((f) => f.id === "q1");
+    if (q1Idx !== -1 && rank1 && rank2 && !nextFixtures[q1Idx]!.team1Id) {
+      nextFixtures[q1Idx] = {
+        ...nextFixtures[q1Idx]!,
+        team1Id: rank1.teamId,
+        team1Name: rank1.teamName,
+        team2Id: rank2.teamId,
+        team2Name: rank2.teamName,
+      };
+    }
+
+    // Populate Eliminator
+    const elimIdx = nextFixtures.findIndex((f) => f.id === "elim");
+    if (elimIdx !== -1 && rank3 && rank4 && !nextFixtures[elimIdx]!.team1Id) {
+      nextFixtures[elimIdx] = {
+        ...nextFixtures[elimIdx]!,
+        team1Id: rank3.teamId,
+        team1Name: rank3.teamName,
+        team2Id: rank4.teamId,
+        team2Name: rank4.teamName,
+      };
+    }
+
+    const q1Fixture = nextFixtures.find((f) => f.id === "q1");
+    const elimFixture = nextFixtures.find((f) => f.id === "elim");
+    const q2Idx = nextFixtures.findIndex((f) => f.id === "q2");
+    const finalIdx = nextFixtures.findIndex((f) => f.id === "final");
+
+    if (q1Fixture?.isPlayed && elimFixture?.isPlayed && q2Idx !== -1 && !nextFixtures[q2Idx]!.team1Id) {
+      const loserQ1Id = q1Fixture.winnerId === q1Fixture.team1Id ? q1Fixture.team2Id : q1Fixture.team1Id;
+      const loserQ1Name = q1Fixture.winnerId === q1Fixture.team1Id ? q1Fixture.team2Name : q1Fixture.team1Name;
+      const winnerElimId = elimFixture.winnerId || elimFixture.team1Id;
+      const winnerElimName = elimFixture.winnerName || elimFixture.team1Name;
+
+      nextFixtures[q2Idx] = {
+        ...nextFixtures[q2Idx]!,
+        team1Id: loserQ1Id,
+        team1Name: loserQ1Name,
+        team2Id: winnerElimId,
+        team2Name: winnerElimName,
+      };
+    }
+
+    const q2Fixture = nextFixtures.find((f) => f.id === "q2");
+    if (q1Fixture?.isPlayed && q2Fixture?.isPlayed && finalIdx !== -1 && !nextFixtures[finalIdx]!.team1Id) {
+      const winnerQ1Id = q1Fixture.winnerId || q1Fixture.team1Id;
+      const winnerQ1Name = q1Fixture.winnerName || q1Fixture.team1Name;
+      const winnerQ2Id = q2Fixture.winnerId || q2Fixture.team1Id;
+      const winnerQ2Name = q2Fixture.winnerName || q2Fixture.team1Name;
+
+      nextFixtures[finalIdx] = {
+        ...nextFixtures[finalIdx]!,
+        team1Id: winnerQ1Id,
+        team1Name: winnerQ1Name,
+        team2Id: winnerQ2Id,
+        team2Name: winnerQ2Name,
+      };
+    }
+  }
+
+  if (isLeagueComplete && format === "TRIANGULAR") {
+    const sorted = [...pointsTable].sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      return b.nrr - a.nrr;
+    });
+    const finalIdx = nextFixtures.findIndex((f) => f.id === "final");
+    if (finalIdx !== -1 && sorted[0] && sorted[1] && !nextFixtures[finalIdx]!.team1Id) {
+      nextFixtures[finalIdx] = {
+        ...nextFixtures[finalIdx]!,
+        team1Id: sorted[0].teamId,
+        team1Name: sorted[0].teamName,
+        team2Id: sorted[1].teamId,
+        team2Name: sorted[1].teamName,
+      };
+    }
+  }
+
+  return nextFixtures;
+}
+
+/**
  * Simulates a single cricket match between two franchises using multi-tier AI or intelligent fallback
  */
 export async function simulateMatch(
   tournament: TournamentState,
   fixtureIndex: number,
 ): Promise<TournamentState> {
-  const fixture = tournament.fixtures[fixtureIndex];
-  if (!fixture || fixture.isPlayed) return tournament;
+  let nextFixtures = populatePlayoffs(tournament.fixtures, tournament.pointsTable, tournament.format);
+  const fixture = nextFixtures[fixtureIndex];
+  if (!fixture || fixture.isPlayed) {
+    return { ...tournament, fixtures: nextFixtures };
+  }
 
   const team1 = tournament.teams.find((t) => t.teamId === fixture.team1Id);
   const team2 = tournament.teams.find((t) => t.teamId === fixture.team2Id);
 
   if (!team1 || !team2) {
-    return tournament;
+    return { ...tournament, fixtures: nextFixtures };
   }
 
   // 1. Simulate match details via AI or fallback
@@ -363,7 +524,6 @@ export async function simulateMatch(
     commentaryHighlight: result.commentaryHighlight,
   };
 
-  const nextFixtures = [...tournament.fixtures];
   nextFixtures[fixtureIndex] = updatedFixture;
 
   // 3. Update Points Table if it was a League stage match
@@ -377,112 +537,10 @@ export async function simulateMatch(
     );
   }
 
-  // 4. Check if League Stage just finished -> Populate Playoff Fixtures
-  const isLeagueComplete = nextFixtures
-    .filter((f) => f.stage === "LEAGUE")
-    .every((f) => f.isPlayed);
+  // 4. Update playoff fixtures after this result
+  nextFixtures = populatePlayoffs(nextFixtures, nextPointsTable, tournament.format);
 
-  if (isLeagueComplete && tournament.format === "IPL_4_PLUS") {
-    // Sort standings by points desc, then NRR desc
-    const sorted = [...nextPointsTable].sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      return b.nrr - a.nrr;
-    });
-
-    const rank1 = sorted[0];
-    const rank2 = sorted[1];
-    const rank3 = sorted[2];
-    const rank4 = sorted[3];
-
-    // Populate Qualifier 1
-    const q1Idx = nextFixtures.findIndex((f) => f.id === "q1");
-    if (q1Idx !== -1 && rank1 && rank2) {
-      nextFixtures[q1Idx] = {
-        ...nextFixtures[q1Idx]!,
-        team1Id: rank1.teamId,
-        team1Name: rank1.teamName,
-        team2Id: rank2.teamId,
-        team2Name: rank2.teamName,
-      };
-    }
-
-    // Populate Eliminator
-    const elimIdx = nextFixtures.findIndex((f) => f.id === "elim");
-    if (elimIdx !== -1 && rank3 && rank4) {
-      nextFixtures[elimIdx] = {
-        ...nextFixtures[elimIdx]!,
-        team1Id: rank3.teamId,
-        team1Name: rank3.teamName,
-        team2Id: rank4.teamId,
-        team2Name: rank4.teamName,
-      };
-    }
-  }
-
-  if (isLeagueComplete && tournament.format === "TRIANGULAR") {
-    const sorted = [...nextPointsTable].sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      return b.nrr - a.nrr;
-    });
-    const finalIdx = nextFixtures.findIndex((f) => f.id === "final");
-    if (finalIdx !== -1 && sorted[0] && sorted[1]) {
-      nextFixtures[finalIdx] = {
-        ...nextFixtures[finalIdx]!,
-        team1Id: sorted[0].teamId,
-        team1Name: sorted[0].teamName,
-        team2Id: sorted[1].teamId,
-        team2Name: sorted[1].teamName,
-      };
-    }
-  }
-
-  // 5. Update Qualifier 2 and Final if Q1 or Eliminator just completed
-  if (tournament.format === "IPL_4_PLUS") {
-    const q1Fixture = nextFixtures.find((f) => f.id === "q1");
-    const elimFixture = nextFixtures.find((f) => f.id === "elim");
-    const q2Idx = nextFixtures.findIndex((f) => f.id === "q2");
-    const finalIdx = nextFixtures.findIndex((f) => f.id === "final");
-
-    if (q1Fixture?.isPlayed && elimFixture?.isPlayed && q2Idx !== -1) {
-      const loserQ1Id =
-        q1Fixture.winnerId === q1Fixture.team1Id
-          ? q1Fixture.team2Id
-          : q1Fixture.team1Id;
-      const loserQ1Name =
-        q1Fixture.winnerId === q1Fixture.team1Id
-          ? q1Fixture.team2Name
-          : q1Fixture.team1Name;
-
-      const winnerElimId = elimFixture.winnerId || elimFixture.team1Id;
-      const winnerElimName = elimFixture.winnerName || elimFixture.team1Name;
-
-      nextFixtures[q2Idx] = {
-        ...nextFixtures[q2Idx]!,
-        team1Id: loserQ1Id,
-        team1Name: loserQ1Name,
-        team2Id: winnerElimId,
-        team2Name: winnerElimName,
-      };
-    }
-
-    const q2Fixture = nextFixtures.find((f) => f.id === "q2");
-    if (q1Fixture?.isPlayed && q2Fixture?.isPlayed && finalIdx !== -1) {
-      const winnerQ1Id = q1Fixture.winnerId || q1Fixture.team1Id;
-      const winnerQ1Name = q1Fixture.winnerName || q1Fixture.team1Name;
-      const winnerQ2Id = q2Fixture.winnerId || q2Fixture.team1Id;
-      const winnerQ2Name = q2Fixture.winnerName || q2Fixture.team1Name;
-
-      nextFixtures[finalIdx] = {
-        ...nextFixtures[finalIdx]!,
-        team1Id: winnerQ1Id,
-        team1Name: winnerQ1Name,
-        team2Id: winnerQ2Id,
-        team2Name: winnerQ2Name,
-      };
-    }
-  }
-
-  // 6. Check if tournament is finished
+  // 5. Check if tournament is finished
   let isCompleted = false;
   let championTeamId: string | undefined;
   let championTeamName: string | undefined;
@@ -501,6 +559,18 @@ export async function simulateMatch(
         championTeamId = tId;
         championTeamName =
           tournament.teams.find((t) => t.teamId === tId)?.teamName || "Champion";
+
+        // Mark any remaining unplayed matches in best-of-3 as concluded so the schedule is clean
+        for (let k = 0; k < nextFixtures.length; k++) {
+          if (!nextFixtures[k]!.isPlayed) {
+            nextFixtures[k] = {
+              ...nextFixtures[k]!,
+              isPlayed: true,
+              stageName: `${nextFixtures[k]!.stageName} (Decided)`,
+              winMargin: "Not Needed (Series won 2-0)",
+            };
+          }
+        }
         break;
       }
     }
@@ -513,7 +583,7 @@ export async function simulateMatch(
     }
   }
 
-  // 7. Calculate Orange Cap & Purple Cap leaders
+  // 6. Calculate Orange Cap & Purple Cap leaders
   const { orangeCap, purpleCap } = calculateCaps(nextFixtures);
 
   return {
@@ -593,7 +663,7 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
   // TIER 1: GROQ
   if (GROQ_API_KEY) {
     try {
-      const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      const resp = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -608,23 +678,24 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
           response_format: { type: "json_object" },
           temperature: 0.8,
         }),
-      });
+      }, 2500);
       if (resp.ok) {
         const data = await resp.json();
         const content = data.choices?.[0]?.message?.content;
         if (content) {
-          return JSON.parse(content);
+          const parsed = JSON.parse(content);
+          return sanitizeSimulatedResult(parsed, team1, team2);
         }
       }
     } catch {
-      // try next
+      // try next tier
     }
   }
 
   // TIER 2: OPENAI
   if (OPENAI_API_KEY) {
     try {
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      const resp = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -639,23 +710,24 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
           response_format: { type: "json_object" },
           temperature: 0.8,
         }),
-      });
+      }, 2500);
       if (resp.ok) {
         const data = await resp.json();
         const content = data.choices?.[0]?.message?.content;
         if (content) {
-          return JSON.parse(content);
+          const parsed = JSON.parse(content);
+          return sanitizeSimulatedResult(parsed, team1, team2);
         }
       }
     } catch {
-      // try next
+      // try next tier
     }
   }
 
   // TIER 3: GEMINI
   if (BACKUP_AI_KEY) {
     try {
-      const resp = await fetch(
+      const resp = await fetchWithTimeout(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${BACKUP_AI_KEY}`,
         {
           method: "POST",
@@ -665,12 +737,14 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
             generationConfig: { responseMimeType: "application/json" },
           }),
         },
+        2500,
       );
       if (resp.ok) {
         const data = await resp.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
-          return JSON.parse(text);
+          const parsed = JSON.parse(text);
+          return sanitizeSimulatedResult(parsed, team1, team2);
         }
       }
     } catch {
@@ -680,6 +754,36 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
 
   // TIER 4: Deterministic Fallback Engine
   return fallbackSimulateMatch(team1, team2);
+}
+
+/**
+ * Sanitizes simulated match outputs to guarantee valid team IDs and scores
+ */
+function sanitizeSimulatedResult(
+  result: any,
+  team1: TeamLineup,
+  team2: TeamLineup,
+) {
+  let winnerId = result.winnerId;
+  let winnerName = result.winnerName;
+
+  if (winnerId !== team1.teamId && winnerId !== team2.teamId) {
+    const inn1Runs = Number(result.innings1?.runs) || 0;
+    const inn2Runs = Number(result.innings2?.runs) || 0;
+    if (inn1Runs > inn2Runs) {
+      winnerId = team1.teamId;
+      winnerName = team1.teamName;
+    } else {
+      winnerId = team2.teamId;
+      winnerName = team2.teamName;
+    }
+  }
+
+  return {
+    ...result,
+    winnerId,
+    winnerName: winnerName || (winnerId === team1.teamId ? team1.teamName : team2.teamName),
+  };
 }
 
 /**

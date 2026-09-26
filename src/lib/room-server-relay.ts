@@ -110,6 +110,17 @@ export function saveStoredRoom(roomCode: string, roomData: any): any {
     }
   }
 
+  // Ensure all players have valid numerical budgets
+  if (Array.isArray(toSave.players)) {
+    const defaultBudget = typeof toSave.settings?.startingBudget === "number" ? toSave.settings.startingBudget : 100;
+    toSave.players = toSave.players.map((p: any) => ({
+      ...p,
+      budget: typeof p.budget === "number" && !isNaN(p.budget) ? Math.round(p.budget * 100) / 100 : defaultBudget,
+      initialBudget: typeof p.initialBudget === "number" && !isNaN(p.initialBudget) ? Math.round(p.initialBudget * 100) / 100 : defaultBudget,
+      movies: Array.isArray(p.movies) ? p.movies : [],
+    }));
+  }
+
   rooms.set(canonicalCode, {
     roomCode: canonicalCode,
     updatedAt: Date.now(),
@@ -130,14 +141,25 @@ export function addPlayerToStoredRoom(roomCode: string, player: any): { success:
   if (!room.players) room.players = [];
 
   const maxPlayers = room.settings?.maxPlayers || 8;
+  const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
   const existingIndex = room.players.findIndex((p: any) => p.id === player.id);
 
   if (existingIndex >= 0) {
     // Update existing player record
     const prev = room.players[existingIndex];
+    const prevBudget = typeof prev.budget === "number" && !isNaN(prev.budget) ? prev.budget : undefined;
+    const incomingBudget = typeof player.budget === "number" && !isNaN(player.budget) ? player.budget : undefined;
+    const finalBudget = Math.round((prevBudget ?? incomingBudget ?? startingBudget) * 100) / 100;
+
+    const prevInitial = typeof prev.initialBudget === "number" && !isNaN(prev.initialBudget) ? prev.initialBudget : undefined;
+    const incomingInitial = typeof player.initialBudget === "number" && !isNaN(player.initialBudget) ? player.initialBudget : undefined;
+    const finalInitial = Math.round((prevInitial ?? incomingInitial ?? startingBudget) * 100) / 100;
+
     room.players[existingIndex] = {
       ...prev,
       ...player,
+      budget: finalBudget,
+      initialBudget: finalInitial,
       movies: prev.movies || player.movies || [],
     };
   } else {
@@ -154,9 +176,18 @@ export function addPlayerToStoredRoom(roomCode: string, player: any): { success:
       }
       cleanName = `${cleanName} ${counter}`;
     }
-    player.name = cleanName;
-    player.movies = player.movies || [];
-    room.players.push(player);
+
+    const assignedBudget = typeof player.budget === "number" && !isNaN(player.budget) ? Math.round(player.budget * 100) / 100 : startingBudget;
+    const assignedInitial = typeof player.initialBudget === "number" && !isNaN(player.initialBudget) ? Math.round(player.initialBudget * 100) / 100 : startingBudget;
+
+    const newPlayer = {
+      ...player,
+      name: cleanName,
+      budget: assignedBudget,
+      initialBudget: assignedInitial,
+      movies: player.movies || [],
+    };
+    room.players.push(newPlayer);
   }
 
   room.version = (room.version || 1) + 1;

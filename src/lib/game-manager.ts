@@ -820,8 +820,19 @@ export function getRoom(roomCode: string): RoomState | null {
           parsed.auctionType = parsed.settings?.auctionType || (cand.startsWith("IPL") ? "CRICKET" : "CINEMA");
         }
         if (Array.isArray(parsed.players)) {
+          const startingBudget = typeof parsed.settings?.startingBudget === "number" ? parsed.settings.startingBudget : 100;
           parsed.players.forEach((p: any) => {
             if (!p.movies) p.movies = [];
+            if (typeof p.budget !== "number" || isNaN(p.budget)) {
+              p.budget = startingBudget;
+            } else {
+              p.budget = Math.round(p.budget * 100) / 100;
+            }
+            if (typeof p.initialBudget !== "number" || isNaN(p.initialBudget)) {
+              p.initialBudget = startingBudget;
+            } else {
+              p.initialBudget = Math.round(p.initialBudget * 100) / 100;
+            }
           });
         }
         return parsed;
@@ -917,18 +928,28 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           .order("created_at", { ascending: false })
           .limit(30);
 
-        const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          budget: Number(p.budget),
-          initialBudget: Number(p.initial_budget),
-          movies: p.movies || [],
-          isHost: Boolean(p.is_host),
-          isBot: Boolean(p.is_bot),
-          avatar: p.avatar || "CB",
-          color: p.color,
-          ready: Boolean(p.is_ready),
-        }));
+        const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
+        const defaultStartingBudget = typeof settings.startingBudget === "number" ? settings.startingBudget : 100;
+
+        const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => {
+          const rawB = p.budget !== null && p.budget !== undefined ? Number(p.budget) : NaN;
+          const safeB = !isNaN(rawB) ? rawB : defaultStartingBudget;
+          const rawInit = p.initial_budget !== null && p.initial_budget !== undefined ? Number(p.initial_budget) : NaN;
+          const safeInit = !isNaN(rawInit) ? rawInit : safeB;
+
+          return {
+            id: p.id,
+            name: p.name,
+            budget: Math.round(safeB * 100) / 100,
+            initialBudget: Math.round(safeInit * 100) / 100,
+            movies: Array.isArray(p.movies) ? p.movies : [],
+            isHost: Boolean(p.is_host),
+            isBot: Boolean(p.is_bot),
+            avatar: p.avatar || "CB",
+            color: p.color,
+            ready: Boolean(p.is_ready),
+          };
+        });
 
         const mappedMessages: ChatMsg[] = (remoteMessages || []).map((m: any) => ({
           id: m.id,
@@ -943,7 +964,7 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           id: b.id,
           playerId: b.player_id,
           playerName: b.player_name,
-          amount: Number(b.amount),
+          amount: Math.round(Number(b.amount) * 100) / 100,
           time: new Date(b.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         }));
 
@@ -976,7 +997,14 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
               playerMap.set(lp.id, lp);
             } else {
               if ((lp.movies?.length || 0) >= (existing.movies?.length || 0)) {
-                playerMap.set(lp.id, { ...existing, ...lp });
+                const mergedB = typeof lp.budget === "number" && !isNaN(lp.budget) ? lp.budget : existing.budget;
+                const mergedInit = typeof lp.initialBudget === "number" && !isNaN(lp.initialBudget) ? lp.initialBudget : existing.initialBudget;
+                playerMap.set(lp.id, {
+                  ...existing,
+                  ...lp,
+                  budget: Math.round(mergedB * 100) / 100,
+                  initialBudget: Math.round(mergedInit * 100) / 100,
+                });
               }
             }
           });
@@ -984,7 +1012,6 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
         const mergedPlayers = Array.from(playerMap.values());
 
         const remoteIndex = remoteRoom.current_movie_index;
-        const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
         const auctionType: AuctionType =
           (settings as any)?.auctionType ||
           settings.auctionType ||
@@ -1246,12 +1273,20 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
     room.players[playerIndex]!.name = user.name;
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
+    const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+      room.players[playerIndex]!.budget = startingBudget;
+    }
+    if (typeof room.players[playerIndex]!.initialBudget !== "number" || isNaN(room.players[playerIndex]!.initialBudget)) {
+      room.players[playerIndex]!.initialBudget = startingBudget;
+    }
   } else if (room.players.length < room.settings.maxPlayers) {
+    const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
     const newPlayer: Player = {
       id: user.id,
       name: user.name,
-      budget: room.settings.startingBudget,
-      initialBudget: room.settings.startingBudget,
+      budget: startingBudget,
+      initialBudget: startingBudget,
       movies: [],
       isHost: false,
       isBot: false,
@@ -1295,9 +1330,14 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
   const cleanName = playerName.trim() || currentUser.name || "Franchise Owner";
   const user = setCurrentUser({ name: cleanName });
 
+  const existingLocal = getRoom(primaryCode);
+  const defaultStartingBudget = typeof existingLocal?.settings?.startingBudget === "number" ? existingLocal.settings.startingBudget : 100;
+
   const playerPayload = {
     id: user.id,
     name: user.name,
+    budget: defaultStartingBudget,
+    initialBudget: defaultStartingBudget,
     avatar: user.avatar,
     color: user.color,
     ready: true,
@@ -1388,16 +1428,23 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
 
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
 
+  const fallbackStartingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
   if (playerIndex >= 0 && room.players[playerIndex]) {
     room.players[playerIndex]!.name = finalName;
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
+    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+      room.players[playerIndex]!.budget = fallbackStartingBudget;
+    }
+    if (typeof room.players[playerIndex]!.initialBudget !== "number" || isNaN(room.players[playerIndex]!.initialBudget)) {
+      room.players[playerIndex]!.initialBudget = fallbackStartingBudget;
+    }
   } else if (room.players.length < maxPlayers) {
     const newPlayer: Player = {
       id: user.id,
       name: finalName,
-      budget: room.settings.startingBudget,
-      initialBudget: room.settings.startingBudget,
+      budget: fallbackStartingBudget,
+      initialBudget: fallbackStartingBudget,
       movies: [],
       isHost: false,
       isBot: false,
@@ -1589,6 +1636,15 @@ export function placeBid(
       return { success: false, message: "Bid must be higher than current bid." };
     }
   }
+
+  const defaultBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+  if (typeof player.budget !== "number" || isNaN(player.budget)) {
+    player.budget = defaultBudget;
+  }
+  if (typeof player.initialBudget !== "number" || isNaN(player.initialBudget)) {
+    player.initialBudget = defaultBudget;
+  }
+  player.budget = Math.round(player.budget * 100) / 100;
 
   if (newBid > player.budget) {
     return {
@@ -1802,10 +1858,15 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
       // Idempotency check: prevent duplicate acquisition or double deduction
       const alreadyWon = winner.movies.some((m) => m.id === currentMovie.id);
       if (!alreadyWon) {
-        winner.budget -= room.currentBid;
+        const defaultBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+        const currentB = typeof winner.budget === "number" && !isNaN(winner.budget) ? winner.budget : defaultBudget;
+        winner.budget = Math.round((currentB - room.currentBid) * 100) / 100;
+        if (typeof winner.initialBudget !== "number" || isNaN(winner.initialBudget)) {
+          winner.initialBudget = defaultBudget;
+        }
         const wonMovie: OwnedMovie = {
           ...currentMovie,
-          purchasePrice: room.currentBid,
+          purchasePrice: Math.round(room.currentBid * 100) / 100,
           purchasedBy: winner.id,
           purchasedByName: winner.name,
         };
