@@ -4778,50 +4778,153 @@ export function getOptimalPlaying11(squad: any[]): {
   };
 }
 
+/**
+ * The 60 most famous, currently active superstars in cricket.
+ * Guaranteed to be included in every IPL auction pool, even in 2-player (60-player) games.
+ */
+export const FAMOUS_MARQUEE_SUPERSTAR_IDS: string[] = [
+  // Legendary & Current Top Batters
+  "virat-kohli",
+  "rohit-sharma",
+  "suryakumar-yadav",
+  "travis-head",
+  "shubman-gill",
+  "yashasvi-jaiswal",
+  "rinku-singh",
+  "ruturaj-gaikwad",
+  "tilak-varma",
+  "abhishek-sharma",
+  "sai-sudharsan",
+  "shreyas-iyer",
+  "david-miller",
+  "faf-du-plessis",
+  "david-warner",
+  "rajat-patidar",
+
+  // Top Wicketkeepers
+  "ms-dhoni",
+  "heinrich-klaasen",
+  "rishabh-pant",
+  "jos-buttler",
+  "nicholas-pooran",
+  "sanju-samson",
+  "kl-rahul",
+  "phil-salt",
+  "ishan-kishan",
+  "quinton-de-kock",
+
+  // Top Fast Bowlers
+  "jasprit-bumrah",
+  "pat-cummins",
+  "mitchell-starc",
+  "trent-boult",
+  "kagiso-rabada",
+  "mohammed-shami",
+  "mohammed-siraj",
+  "arshdeep-singh",
+  "matheesha-pathirana",
+  "josh-hazlewood",
+  "lockie-ferguson",
+  "bhuvneshwar-kumar",
+  "harshit-rana",
+  "mayank-yadav",
+
+  // Top All-Rounders
+  "hardik-pandya",
+  "andre-russell",
+  "sunil-narine",
+  "ravindra-jadeja",
+  "glenn-maxwell",
+  "axar-patel",
+  "marcus-stoinis",
+  "shivam-dube",
+  "sam-curran",
+  "nitish-reddy",
+  "wanindu-hasaranga",
+  "washington-sundar",
+  "riyan-parag",
+  "liam-livingstone",
+  "tim-david",
+
+  // Top Spin Wizards
+  "rashid-khan",
+  "kuldeep-yadav",
+  "yuzvendra-chahal",
+  "varun-chakaravarthy",
+  "ravi-bishnoi",
+];
+
 export function getRandomizedCricketSlate(
   count = 60,
   category = "ALL",
 ): CricketPlayerItem[] {
-  let basePool = [...cricketPlayers];
+  const playerMap = new Map(cricketPlayers.map((p) => [p.id, p]));
+  const marqueeSet = new Set(FAMOUS_MARQUEE_SUPERSTAR_IDS);
+
+  let selected: CricketPlayerItem[] = [];
 
   if (category && category !== "ALL") {
-    const matching = basePool.filter((p) => p.category === category || p.role === category);
-    if (matching.length >= count) {
-      basePool = matching;
-    } else if (matching.length > 0) {
-      const matchIds = new Set(matching.map((p) => p.id));
-      const rest = basePool.filter((p) => !matchIds.has(p.id));
-      basePool = [...matching, ...rest];
+    const matching = cricketPlayers.filter((p) => p.category === category || p.role === category);
+    const marqueeMatching = FAMOUS_MARQUEE_SUPERSTAR_IDS
+      .map((id) => playerMap.get(id))
+      .filter((p): p is CricketPlayerItem => Boolean(p && (p.category === category || p.role === category)));
+
+    const otherMatching = matching.filter((p) => !marqueeSet.has(p.id));
+    for (let i = otherMatching.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = otherMatching[i]!;
+      otherMatching[i] = otherMatching[j]!;
+      otherMatching[j] = temp;
+    }
+
+    selected = [...marqueeMatching, ...otherMatching].slice(0, count);
+  } else {
+    // Category is "ALL": Guarantee all marquee superstars are included first!
+    const marqueeList = FAMOUS_MARQUEE_SUPERSTAR_IDS
+      .map((id) => playerMap.get(id))
+      .filter((p): p is CricketPlayerItem => Boolean(p));
+
+    const otherPlayers = cricketPlayers.filter((p) => !marqueeSet.has(p.id));
+    for (let i = otherPlayers.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const temp = otherPlayers[i]!;
+      otherPlayers[i] = otherPlayers[j]!;
+      otherPlayers[j] = temp;
+    }
+
+    if (count <= marqueeList.length) {
+      selected = marqueeList.slice(0, count);
+    } else {
+      const needed = count - marqueeList.length;
+      selected = [...marqueeList, ...otherPlayers.slice(0, needed)];
     }
   }
 
-  // Fisher-Yates shuffle
-  const pool = [...basePool];
-  for (let i = pool.length - 1; i > 0; i--) {
+  // Shuffle the final auction presentation order so superstars appear across all rounds
+  for (let i = selected.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    const temp = pool[i]!;
-    pool[i] = pool[j]!;
-    pool[j] = temp;
+    const temp = selected[i]!;
+    selected[i] = selected[j]!;
+    selected[j] = temp;
   }
 
-  if (count <= pool.length) {
-    return pool.slice(0, count);
-  }
-
-  // If count requested exceeds base pool (e.g. 60, 85, 110, 135, 160), generate uniquely indexed players
-  const extendedList: CricketPlayerItem[] = [...pool];
-  let cycle = 1;
-  while (extendedList.length < count) {
-    for (const item of pool) {
-      if (extendedList.length >= count) break;
-      extendedList.push({
-        ...item,
-        id: `${item.id}-draft-${cycle}`,
-        title: `${item.title}`,
-      });
+  // Fallback extension if requested count exceeds available pool
+  if (selected.length < count) {
+    const extendedList: CricketPlayerItem[] = [...selected];
+    let cycle = 1;
+    while (extendedList.length < count) {
+      for (const item of selected) {
+        if (extendedList.length >= count) break;
+        extendedList.push({
+          ...item,
+          id: `${item.id}-draft-${cycle}`,
+          title: `${item.title}`,
+        });
+      }
+      cycle++;
     }
-    cycle++;
+    return extendedList.slice(0, count);
   }
 
-  return extendedList.slice(0, count);
+  return selected.slice(0, count);
 }

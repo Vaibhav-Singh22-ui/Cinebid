@@ -300,6 +300,37 @@ In an 8-player IPL Mega Auction created with a 150 Cr starting purse, only two p
 
 ---
 
+## 15. Player Photo Authentication, Core Marquee Pool Guarantee & Rating Isolation
+
+### Problem Analysis & Diagnosis
+1. **Mismatched and Reused Player Photographs**:
+   - Out of 231 portrait definitions, 50 URLs were lazily duplicated across 182 players.
+   - Example bugs: Rinku Singh had Yashasvi Jaiswal's face, Heinrich Klaasen had David Miller's face, Abhishek Sharma had Tilak Varma's face, Nicholas Pooran had Shimron Hetmyer's face.
+   - `getRealCricketerPhoto` had a loose substring matcher (`cleanId.includes(seedId)`) that assigned wrong faces and a default fallback to Virat Kohli (`CRICKETER_PORTRAIT_SEEDS["virat-kohli"]`).
+2. **Missing Marquee Superstars in Small/2-Player Games**:
+   - In 2-player games (which require 60 players), `getRandomizedCricketSlate` was shuffling all 230 players uniformly with Fisher-Yates and taking the first 60.
+   - As a result, mega stars like Virat Kohli, Rohit Sharma, MS Dhoni, Jasprit Bumrah, and Pat Cummins could be completely omitted from small games, while obscure bench/domestic players took their place, ruining the gameplay experience.
+3. **Player Ratings Causing Confusion**:
+   - Arbitrary decimal/100 ratings (`PLAYER RATING: 94 / 100`, `★ 9.3`) confused users (e.g., Pat Cummins had a lower numerical rating than uncapped fast bowler Mayank Yadav).
+   - In real-world cricket auctions, players are judged by IPL stats, base prices, roles, and signature match-winning skills rather than an artificial number.
+
+### Permanent Fixes
+1. **Strict Photo Authentication & Fallback Policy**:
+   - Purged all duplicate, shared, and fake photo URLs from `CRICKETER_PORTRAIT_SEEDS`.
+   - Only assign a photo URL if it genuinely belongs to that exact cricketer. If an authentic photo is not available, set `photoUrl: ""`.
+   - In `getRealCricketerPhoto`: Removed substring match and default Virat Kohli fallback. If Wikipedia doesn't have an authentic photo, return `""`.
+   - When `photoUrl` is `""`, `Poster` displays a clean, premium gold monogram crest with the player's initials, role badge, nationality flag, and name.
+2. **Guaranteed Marquee Superstars in Auction Pool**:
+   - Defined `FAMOUS_MARQUEE_SUPERSTAR_IDS` containing the 60 most famous active cricketers in the world.
+   - In `getRandomizedCricketSlate`, the 60 marquee superstars are guaranteed to be included in every IPL auction pool, even in 2-player (60-player) games.
+   - Shuffled their auction presentation order with Fisher-Yates so their appearance throughout the bidding rounds remains unpredictable and thrilling.
+3. **Rating Isolation for Cricket**:
+   - Replaced `PLAYER RATING` on the live auction card with `SPECIALTY SKILL` (signature skill / role specialization).
+   - Hid star ratings across `MovieCard`, `PlayerCard`, `AuctionTopTabs`, and `TradeHubModal` in Cricket mode.
+   - In Cinema mode (movies), preserved standard IMDb ratings (`★ IMDb 8.8`).
+
+---
+
 ## Summary Checklist for Future Work
 - [x] All 58 cricketers have distinct, verified photo URLs.
 - [x] Overseas limits: up to 7 in squad, max 4 in Playing 11.
@@ -317,6 +348,10 @@ In an 8-player IPL Mega Auction created with a 150 Cr starting purse, only two p
 - [x] Live auction header kept clean; trading restricted strictly to post-auction / pre-evaluation window.
 - [x] Groq AI model updated to active endpoints (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`) restoring live AI simulation.
 - [x] Groq capacity verified for daily 8-player game simulations (33 requests / ~20k tokens per tournament).
+- [x] Strict photo authentication policy: no fake/shared faces, elegant monogram crest fallback.
+- [x] Top 60 marquee superstars guaranteed in every cricket game auction pool.
+- [x] Ratings hidden in Cricket mode to prevent user confusion.
+
 
 
 

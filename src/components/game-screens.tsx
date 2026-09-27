@@ -1181,7 +1181,9 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
                     <option value="PRICE_ASC" className="bg-panel text-cream">Base Price: Low → High</option>
                     <option value="NAME_ASC" className="bg-panel text-cream">Name: A → Z</option>
                     <option value="NAME_DESC" className="bg-panel text-cream">Name: Z → A</option>
-                    <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                    {!isCricket && (
+                      <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1976,13 +1978,13 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                   {currentItem.role || currentItem.genre || "All-rounder"} • {isOverseasItem ? (currentItem.country || "OVERSEAS") : "INDIAN"}
                 </p>
 
-                {/* PLAYER RATING */}
+                {/* SPECIALTY / SIGNATURE SKILL */}
                 <div className="rounded-xl bg-black/40 border border-border/70 p-2 text-center mt-1">
-                  <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold block mb-0.5">
-                    PLAYER RATING
+                  <span className="text-[9px] uppercase tracking-widest text-gold font-bold block mb-0.5">
+                    SPECIALTY SKILL
                   </span>
-                  <strong className="text-base font-black text-cream font-mono">
-                    {currentItem.imdbRating ? Math.round(currentItem.imdbRating * 10) : 85} / 100
+                  <strong className="text-xs sm:text-sm font-bold text-cream font-sans truncate block px-1">
+                    {currentItem.signatureSkill || currentItem.studio || "Key Match Winner"}
                   </strong>
                 </div>
 
@@ -4546,7 +4548,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                         <span className="text-emerald-400 font-black flex items-center gap-1">
                           <Check size={12} /> Locked
                         </span>
-                        {item.imdbRating && (
+                        {!isCricket && item.imdbRating && (
                           <span className="text-yellow-400 font-bold">★ {item.imdbRating}</span>
                         )}
                       </div>

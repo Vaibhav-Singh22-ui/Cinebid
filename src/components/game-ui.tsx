@@ -384,9 +384,15 @@ export function MovieCard({
         </div>
 
         <div className="flex items-center justify-between text-xs text-muted-foreground mt-2 pt-2 border-t border-border/50">
-          <span className={`${isCricket ? "text-cyan-400" : "text-yellow-400"} font-bold flex items-center gap-0.5 text-[11px]`}>
-            ★ {movie.imdbRating || (isCricket ? 9.2 : 8.0)}
-          </span>
+          {isCricket ? (
+            <span className="text-cream/90 font-semibold text-[11px] truncate max-w-[130px]">
+              {movie.countryFlag || "🏏"} {movie.role ? movie.role.replace(/_/g, " ") : movie.genre}
+            </span>
+          ) : (
+            <span className="text-yellow-400 font-bold flex items-center gap-0.5 text-[11px]">
+              ★ {movie.imdbRating || 8.0}
+            </span>
+          )}
           {price !== undefined && (
             <span className="text-gold font-bold font-mono">{formatCr(price)}</span>
           )}
@@ -755,7 +761,7 @@ export function RankingList({
                               </strong>
                               <div className="flex items-center justify-between text-[9px] text-muted-foreground mt-0.5">
                                 <span className={role.colorClass}>{role.label}</span>
-                                <span className="text-gold font-bold">★ {playerItem.imdbRating}</span>
+                                <span className="text-gold font-bold font-mono">{formatCr(playerItem.purchasePrice || playerItem.basePrice)}</span>
                               </div>
                             </div>
                           </div>
@@ -1583,7 +1589,9 @@ export function AuctionTopTabs({
                       <option value="PRICE_ASC" className="bg-panel text-cream">Price: Low → High</option>
                       <option value="NAME_ASC" className="bg-panel text-cream">Name: A → Z</option>
                       <option value="NAME_DESC" className="bg-panel text-cream">Name: Z → A</option>
-                      <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                      {!isCricket && (
+                        <option value="RATING_DESC" className="bg-panel text-cream">Rating: Highest</option>
+                      )}
                     </select>
                   </div>
                 </div>
@@ -1806,7 +1814,7 @@ export function AuctionTopTabs({
                                   </span>
                                 ) : (
                                   <span className="text-muted-foreground text-[9px] font-mono">
-                                    {movie.imdbRating ? `${movie.imdbRating}★` : ""}
+                                    {isCricket ? (movie.countryFlag || "🏏") : (movie.imdbRating ? `${movie.imdbRating}★` : "")}
                                   </span>
                                 )}
                               </div>

@@ -368,7 +368,7 @@ export function TradeHubModal({
                                       {item.title}
                                     </strong>
                                     <span className="text-[10px] text-muted-foreground block truncate">
-                                      {item.role || item.genre} • Rating: {item.imdbRating}
+                                      {item.role || item.genre}{item.auctionType === "CRICKET" || item.role ? "" : ` • Rating: ${item.imdbRating}`}
                                     </span>
                                   </div>
                                 </div>
@@ -438,7 +438,7 @@ export function TradeHubModal({
                                       {item.title}
                                     </strong>
                                     <span className="text-[10px] text-muted-foreground block truncate">
-                                      {item.role || item.genre} • Rating: {item.imdbRating}
+                                      {item.role || item.genre}{item.auctionType === "CRICKET" || item.role ? "" : ` • Rating: ${item.imdbRating}`}
                                     </span>
                                   </div>
                                 </div>

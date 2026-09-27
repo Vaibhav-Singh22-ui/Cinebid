@@ -1,4 +1,10 @@
-// Verified individual, distinct high-resolution real cricketer portraits
+// Verified individual, authentic high-resolution real cricketer portraits.
+// STRICT ANTI-MISMATCH POLICY:
+// 1. Only assign a photo if it genuinely, undeniably belongs to THAT specific player.
+// 2. Never reuse another cricketer's photo for a different player.
+// 3. If no authentic photo exists on the internet, return "" (empty string) so the UI
+//    elegantly renders the gold monogram crest with role badge and country flag.
+
 export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
   // ==========================================
   // --- INDIAN BATTERS ---
@@ -13,28 +19,21 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
     "https://upload.wikimedia.org/wikipedia/commons/3/34/Shubman_Gill_2023_%28cropped%29.jpg",
   "yashasvi-jaiswal":
     "https://upload.wikimedia.org/wikipedia/commons/7/71/Yashasvi_Jaiswal_in_PMO_New_Delhi.jpg",
-  "rinku-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Yashasvi_Jaiswal_in_PMO_New_Delhi.jpg",
+  "rinku-singh": "",
   "ruturaj-gaikwad":
     "https://upload.wikimedia.org/wikipedia/commons/2/27/Ruturaj_Gaikwad.jpeg",
   "tilak-varma":
     "https://upload.wikimedia.org/wikipedia/commons/0/0b/Tilak_Varma_in_March_2026.png",
-  "abhishek-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/0/0b/Tilak_Varma_in_March_2026.png",
+  "abhishek-sharma": "",
   "sai-sudharsan":
     "https://upload.wikimedia.org/wikipedia/commons/f/fb/Sai_Sudharsan_GT_vs_CSK_IPL_2023.jpg",
   "shreyas-iyer":
     "https://upload.wikimedia.org/wikipedia/commons/a/ae/Shreyas_Iyer_snapped_at_the_airport_%28Cropped%29.jpg",
-  "rajat-patidar":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4b/2_02_Phil_Salt.jpg",
-  "shashank-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/7/79/Sarfaraz_Khan.jpg",
-  "ashutosh-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/a/a8/Prithvi_shaw.png",
-  "devdutt-padikkal":
-    "https://upload.wikimedia.org/wikipedia/commons/9/96/Ajinkya_Rahane_2016_%28cropped%29.jpg",
-  "rahul-tripathi":
-    "https://upload.wikimedia.org/wikipedia/commons/3/3f/SHIKHAR_DHAWAN_%2816005494418%29.jpg",
+  "rajat-patidar": "",
+  "shashank-singh": "",
+  "ashutosh-sharma": "",
+  "devdutt-padikkal": "",
+  "rahul-tripathi": "",
   "shikhar-dhawan":
     "https://upload.wikimedia.org/wikipedia/commons/3/3f/SHIKHAR_DHAWAN_%2816005494418%29.jpg",
   "ajinkya-rahane":
@@ -43,9 +42,28 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
     "https://upload.wikimedia.org/wikipedia/commons/a/a8/Prithvi_shaw.png",
   "sarfaraz-khan":
     "https://upload.wikimedia.org/wikipedia/commons/7/79/Sarfaraz_Khan.jpg",
+  "karun-nair": "",
+  "manish-pandey": "",
+  "mayank-agarwal": "",
+  "mandeep-singh": "",
+  "ambati-rayudu": "",
+  "robin-uthappa":
+    "https://upload.wikimedia.org/wikipedia/commons/e/eb/Robin_Uthappa_IPL_2012.jpg",
+  "yash-dhull": "",
+  "angkrish-raghuvanshi": "",
+  "sameer-rizvi": "",
+  "abdul-samad": "",
+  "shahrukh-khan": "",
+  "ayush-badoni": "",
+  "nehal-wadhera": "",
+  "suyash-prabhudessai": "",
+  "abhinav-manohar": "",
+  "shaik-rasheed": "",
+  "swastik-chikara": "",
+  "priyam-garg": "",
 
   // ==========================================
-  // --- OVERSEAS BATSMEN ---
+  // --- OVERSEAS BATTERS ---
   // ==========================================
   "travis-head":
     "https://upload.wikimedia.org/wikipedia/commons/0/05/Travis_Head_bowling_at_Perth_Stadium%2C_First_Test_Australia_versus_West_Indies%2C_2_December_2022_03_%28cropped%29.jpg",
@@ -63,18 +81,26 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
     "https://upload.wikimedia.org/wikipedia/commons/2/2a/Kane_Williamson_in_2019.jpg",
   "jake-fraser-mcgurk":
     "https://upload.wikimedia.org/wikipedia/commons/c/c1/260328_D3_Jake_Fraser-McGurk_01.jpg",
-  "tristan-stubbs":
-    "https://upload.wikimedia.org/wikipedia/commons/2/25/Aiden_Markram_interview_after_WTC_final_2025_%28cropped%29.png",
+  "tristan-stubbs": "",
   "shimron-hetmyer":
     "https://upload.wikimedia.org/wikipedia/commons/8/8a/Shimron_Hetmyer.jpg",
-  "rovman-powell":
-    "https://upload.wikimedia.org/wikipedia/commons/9/9f/Andre_Russell_%281%29.jpg",
+  "rovman-powell": "",
   "aiden-markram":
     "https://upload.wikimedia.org/wikipedia/commons/2/25/Aiden_Markram_interview_after_WTC_final_2025_%28cropped%29.png",
-  "glenn-phillips":
-    "https://upload.wikimedia.org/wikipedia/commons/1/1d/Lockie_Ferguson.jpg",
-  "daryl-mitchell":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
+  "glenn-phillips": "",
+  "daryl-mitchell": "",
+  "devon-conway": "",
+  "dewald-brevis": "",
+  "reeza-hendricks": "",
+  "alex-hales": "",
+  "rilee-rossouw": "",
+  "rassie-van-der-dussen": "",
+  "brandon-king": "",
+  "finn-allen": "",
+  "michael-bracewell": "",
+  "matthew-short": "",
+  "sherfane-rutherford": "",
+  "ashton-turner": "",
 
   // ==========================================
   // --- INDIAN WICKETKEEPERS ---
@@ -89,34 +115,35 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
     "https://upload.wikimedia.org/wikipedia/commons/6/69/KL_Rahul_at_Femina_Miss_India_2018_Grand_Finale_%28cropped%29.jpg",
   "ishan-kishan":
     "https://upload.wikimedia.org/wikipedia/commons/d/d7/Ishan_Kishan.jpg",
-  "jitesh-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/f/fc/Dinesh.Karthik.jpg",
-  "dhruv-jurel":
-    "https://upload.wikimedia.org/wikipedia/commons/f/fb/Sai_Sudharsan_GT_vs_CSK_IPL_2023.jpg",
-  "prabhsimran-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d7/Ishan_Kishan.jpg",
+  "jitesh-sharma": "",
+  "dhruv-jurel": "",
+  "prabhsimran-singh": "",
   "dinesh-karthik":
     "https://upload.wikimedia.org/wikipedia/commons/f/fc/Dinesh.Karthik.jpg",
+  "wriddhiman-saha": "",
+  "ks-bharat": "",
+  "anuj-rawat": "",
+  "abhishek-porel": "",
+  "kumar-kushagra": "",
+  "robin-minz": "",
+  "vishnu-vinod": "",
 
   // ==========================================
   // --- OVERSEAS WICKETKEEPERS ---
   // ==========================================
-  "heinrich-klaasen":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f6/David_Miller_2025_interview_%28cropped%29.png",
+  "heinrich-klaasen": "",
   "jos-buttler":
-    "https://upload.wikimedia.org/wikipedia/commons/0/01/Jos_Buttler_in_2023.jpg",
-  "nicholas-pooran":
-    "https://upload.wikimedia.org/wikipedia/commons/8/8a/Shimron_Hetmyer.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/7/7b/Jos_Buttler_in_2023.jpg",
+  "nicholas-pooran": "",
   "phil-salt":
     "https://upload.wikimedia.org/wikipedia/commons/4/4b/2_02_Phil_Salt.jpg",
   "quinton-de-kock":
-    "https://upload.wikimedia.org/wikipedia/commons/6/67/QUINTON_DE_KOCK_%2815681398316%29.jpg",
-  "devon-conway":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
-  "rahmanullah-gurbaz":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/Mohammad_Nabi-Australia.jpg",
-  "jonny-bairstow":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/2_05_Bairstow_out.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/8/80/QUINTON_DE_KOCK_%2815681398316%29.jpg",
+  "josh-inglis": "",
+  "rahmanullah-gurbaz": "",
+  "ryan-rickelton": "",
+  "shai-hope": "",
+  "tom-banton": "",
 
   // ==========================================
   // --- INDIAN FAST BOWLERS ---
@@ -124,37 +151,40 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
   "jasprit-bumrah":
     "https://upload.wikimedia.org/wikipedia/commons/0/02/Jasprit_Bumrah_in_PMO_New_Delhi.jpg",
   "mohammed-shami":
-    "https://upload.wikimedia.org/wikipedia/commons/0/01/Mohammed_Shami_Arjuna_Award_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/0/0b/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Shami_%28Cropped%29.jpg",
   "mohammed-siraj":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Siraj_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/1/1a/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Siraj_%28cropped%29.jpg",
   "arshdeep-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/3/36/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/8/87/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
   "bhuvneshwar-kumar":
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
-  "harshit-rana":
-    "https://upload.wikimedia.org/wikipedia/commons/3/36/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
-  "mayank-yadav":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "sandeep-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
-  "avesh-khan":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "t-natarajan":
-    "https://upload.wikimedia.org/wikipedia/commons/6/65/T_Natarajan.jpg",
-  "mukesh-kumar":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/e/ec/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
+  "harshit-rana": "",
+  "mayank-yadav": "",
+  "prasidh-krishna": "",
+  "avesh-khan": "",
+  "mukesh-kumar": "",
   "khaleel-ahmed":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "yash-dayal":
-    "https://upload.wikimedia.org/wikipedia/commons/3/36/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
-  "deepak-chahar":
-    "https://upload.wikimedia.org/wikipedia/commons/7/7b/Deepak_Chahar.jpg",
-  "prasidh-krishna":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Siraj_%28cropped%29.jpg",
-  "mohit-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/d/d4/2_29_Khaleel_mugshot.jpg",
   "umran-malik":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/d/df/Umran_Malik_in_GGM.jpg",
+  "sandeep-sharma": "",
+  "mohit-sharma": "",
+  "ishant-sharma": "",
+  "akash-deep": "",
+  "vaibhav-arora": "",
+  "yash-dayal": "",
+  "chetan-sakariya": "",
+  "shivam-mavi": "",
+  "kartik-tyagi": "",
+  "rasikh-salam": "",
+  "mohsin-khan": "",
+  "vyshak-vijay-kumar": "",
+  "navdeep-saini": "",
+  "simarjeet-singh": "",
+  "kuldeep-sen": "",
+  "jaydev-unadkat": "",
+  "siddharth-kaul": "",
+  "varun-aaron": "",
 
   // ==========================================
   // --- OVERSEAS FAST BOWLERS ---
@@ -162,61 +192,63 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
   "pat-cummins":
     "https://upload.wikimedia.org/wikipedia/commons/6/69/Pat_Cummins_fielding_Ashes_2021_%28cropped%29.jpg",
   "mitchell-starc":
-    "https://upload.wikimedia.org/wikipedia/commons/3/38/Mitchell_Starc_2023.jpg",
-  "trent-boult":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/7/78/Mitchell_Starc_2023.jpg",
+  "trent-boult": "",
   "kagiso-rabada":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
-  "matheesha-pathirana":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Waniya.jpg",
-  "anrich-nortje":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/c/c5/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
+  "matheesha-pathirana": "",
+  "josh-hazlewood":
+    "https://upload.wikimedia.org/wikipedia/commons/5/52/2018_Josh_Hazlewood_%28cropped%29.jpg",
   "lockie-ferguson":
     "https://upload.wikimedia.org/wikipedia/commons/1/1d/Lockie_Ferguson.jpg",
-  "josh-hazlewood":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d9/2018_Josh_Hazlewood_%28cropped%29.jpg",
-  "marco-jansen":
-    "https://upload.wikimedia.org/wikipedia/commons/4/41/Marco_Jansen_2022.jpg",
-  "gerald-coetzee":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
+  "anrich-nortje": "",
+  "gerald-coetzee": "",
+  "alzarri-joseph": "",
   "mustafizur-rahman":
-    "https://upload.wikimedia.org/wikipedia/commons/a/a3/Mustafizur_Rahman_%284%29_%28cropped%29.jpg",
-  "naveen-ul-haq":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/Mohammad_Nabi-Australia.jpg",
-  "alzarri-joseph":
-    "https://upload.wikimedia.org/wikipedia/commons/9/9f/Andre_Russell_%281%29.jpg",
-  "spencer-johnson":
-    "https://upload.wikimedia.org/wikipedia/commons/3/38/Mitchell_Starc_2023.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/2/22/Mustafizur_Rahman_%284%29_%28cropped%29.jpg",
+  "naveen-ul-haq": "",
+  "fazalhaq-farooqi":
+    "https://upload.wikimedia.org/wikipedia/commons/8/87/Fazalhaq_Farooqi.jpg",
+  "spencer-johnson": "",
+  "nathan-ellis": "",
+  "nuwan-thushara": "",
+  "dilshan-madushanka": "",
+  "shamar-joseph": "",
+  "jhye-richardson": "",
+  "reece-topley": "",
+  "chris-woakes": "",
+  "lizaad-williams": "",
+  "gus-atkinson": "",
+  "taskin-ahmed": "",
+  "tim-southee":
+    "https://upload.wikimedia.org/wikipedia/commons/b/b9/Tim_Southee_2016_%28cropped%29.jpg",
 
   // ==========================================
   // --- INDIAN ALL-ROUNDERS ---
   // ==========================================
   "hardik-pandya":
     "https://upload.wikimedia.org/wikipedia/commons/f/fc/Hardik_Pandya_in_PMO_New_Delhi.jpg",
-  "ravindra-jadeja":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/PM_Shri_Narendra_Modi_with_Ravindra_Jadeja_%28Cropped%29.jpg",
-  "axar-patel":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ad/Axar_Patel_in_PMO_New_Delhi.jpg",
+  "ravindra-jadeja": "",
+  "axar-patel": "",
   "shivam-dube":
-    "https://upload.wikimedia.org/wikipedia/commons/6/63/Shivam_Dube_in_PMO_New_Delhi.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/4/4a/Shivam_Dube_in_PMO_New_Delhi.jpg",
   "washington-sundar":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/Washington_Sundar.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/3/3d/Washington_Sundar.jpg",
   "nitish-reddy":
     "https://upload.wikimedia.org/wikipedia/commons/1/1e/Nitish_Kumar_Reddy_BGT_2024_%28cropped%29_2.jpg",
-  "krunal-pandya":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Krunal_Pandya_and_Hardik_Pandya_%28cropped%29_%28cropped%29.jpg",
-  "riyan-parag":
-    "https://upload.wikimedia.org/wikipedia/commons/0/0b/Tilak_Varma_in_March_2026.png",
   "venkatesh-iyer":
-    "https://upload.wikimedia.org/wikipedia/commons/c/c3/Venkatesh_Iyer.png",
-  "rahul-tewatia":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ad/Axar_Patel_in_PMO_New_Delhi.jpg",
-  "ramandeep-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/6/63/Shivam_Dube_in_PMO_New_Delhi.jpg",
-  "shahbaz-ahmed":
-    "https://upload.wikimedia.org/wikipedia/commons/0/05/Shabaz_Ahmed_Senior.jpg",
-  "shardul-thakur":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/PM_Shri_Narendra_Modi_with_Ravindra_Jadeja_%28Cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/a/a2/Venkatesh_Iyer.png",
+  "shardul-thakur": "",
+  "rahul-tewatia": "",
+  "shahbaz-ahmed": "",
+  "ramandeep-singh": "",
+  "riyan-parag": "",
+  "deepak-hooda": "",
+  "harpreet-brar": "",
+  "krishnappa-gowtham": "",
+  "vijay-shankar": "",
+  "swapnil-singh": "",
+  "jalaj-saxena": "",
 
   // ==========================================
   // --- OVERSEAS ALL-ROUNDERS ---
@@ -228,281 +260,84 @@ export const CRICKETER_PORTRAIT_SEEDS: Record<string, string> = {
   "glenn-maxwell":
     "https://upload.wikimedia.org/wikipedia/commons/3/3d/Glen_Maxwell_2026_%28cropped%29.jpg",
   "marcus-stoinis":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/2018.01.21.15.22.25-Stoinis_%2839081521620%29.jpg",
-  "sam-curran":
-    "https://upload.wikimedia.org/wikipedia/commons/1/1b/The_Prime_Minister_welcomes_the_World_Cup_winning_cricketers_%2852764650104%29_-_Sam_Curran_%28cropped%29.jpg",
-  "liam-livingstone":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4d/4_20_Will_Jacks.jpg",
-  "tim-david":
-    "https://upload.wikimedia.org/wikipedia/commons/7/73/Mitchell_Marsh.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/c/cb/2018.01.21.15.22.25-Stoinis_%2839081521620%29.jpg",
+  "sam-curran": "",
+  "liam-livingstone": "",
   "mitchell-marsh":
-    "https://upload.wikimedia.org/wikipedia/commons/7/73/Mitchell_Marsh.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/9/99/Mitchell_Marsh.jpg",
+  "tim-david": "",
   "will-jacks":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4d/4_20_Will_Jacks.jpg",
-  "cameron-green":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b4/Cameron_Green_fielding_Boxing_Day_2022_%28cropped%29.jpg",
-  "rachin-ravindra":
-    "https://upload.wikimedia.org/wikipedia/commons/3/39/Rachin_Ravindra.jpg",
-  "moeen-ali":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d1/2018.01.06.17.47.32-Moeen_Ali_%2838876905344%29_%28cropped%29.jpg",
-  "mitchell-santner":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
-  "romario-shepherd":
-    "https://upload.wikimedia.org/wikipedia/commons/9/9f/Andre_Russell_%281%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/e/ec/4_20_Will_Jacks.jpg",
+  "wanindu-hasaranga":
+    "https://upload.wikimedia.org/wikipedia/commons/9/91/Waniya.jpg",
   "mohammad-nabi":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/Mohammad_Nabi-Australia.jpg",
-  "sikandar-raza":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Sikandar_Raza_2022.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/3/37/Mohammad_Nabi-Australia.jpg",
+  "romario-shepherd": "",
+  "jason-holder": "",
+  "kyle-mayers": "",
+  "azmatullah-omarzai": "",
+  "daniel-sams": "",
+  "roelof-van-der-merwe": "",
+  "ashton-agar":
+    "https://upload.wikimedia.org/wikipedia/commons/6/66/Ashton_Agar_2016.jpg",
 
   // ==========================================
   // --- INDIAN SPINNERS ---
   // ==========================================
-  "yuzvendra-chahal":
-    "https://upload.wikimedia.org/wikipedia/commons/d/df/Yuzvendra_Chahal_in_PMO_New_Delhi.jpg",
   "kuldeep-yadav":
     "https://upload.wikimedia.org/wikipedia/commons/9/91/Kuldeep_Yadav_in_PMO_New_Delhi.jpg",
-  "varun-chakravarthy":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ae/Suyash_Sharma.png",
-  "varun-chakaravarthy":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ae/Suyash_Sharma.png",
-  "ravi-bishnoi":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/4_15_Sai_Kishore.jpg",
-  "rahul-chahar":
+  "yuzvendra-chahal":
     "https://upload.wikimedia.org/wikipedia/commons/d/df/Yuzvendra_Chahal_in_PMO_New_Delhi.jpg",
-  "r-ashwin":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/The_Minister_of_State_for_Youth_Affairs_and_Sports_%28Independent_Charge%29%2C_Shri_Sarbananda_Sonowal_conferring_the_Arjuna_Award_on_cricketer_Ravichandran_Ashwin%2C_in_New_Delhi_on_July_31%2C_2015_cropped.jpg",
-  "piyush-chawla":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Piyush_Chawla_2019.jpg",
-  "sai-kishore":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/4_15_Sai_Kishore.jpg",
+  "varun-chakaravarthy": "",
+  "varun-chakravarthy": "",
+  "ravi-bishnoi": "",
   "suyash-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ae/Suyash_Sharma.png",
-  "mayank-markande":
-    "https://upload.wikimedia.org/wikipedia/commons/d/df/Yuzvendra_Chahal_in_PMO_New_Delhi.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/7/7c/Suyash_Sharma.png",
+  "sai-kishore":
+    "https://upload.wikimedia.org/wikipedia/commons/f/f9/4_15_Sai_Kishore.jpg",
+  "piyush-chawla":
+    "https://upload.wikimedia.org/wikipedia/commons/0/07/Piyush_Chawla_2019.jpg",
+  "rahul-chahar": "",
+  "karn-sharma": "",
+  "amit-mishra": "",
+  "mayank-markande": "",
+  "shreyas-gopal": "",
+  "murugan-ashwin": "",
+  "kumar-kartikeya": "",
+  "jagadeesha-suchith": "",
 
   // ==========================================
   // --- OVERSEAS SPINNERS ---
   // ==========================================
   "rashid-khan":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Rashid_Khan.jpg",
-  "wanindu-hasaranga":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Waniya.jpg",
-  "noor-ahmad":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Rashid_Khan.jpg",
-  "maheesh-theekshana":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Waniya.jpg",
-  "adam-zampa":
-    "https://upload.wikimedia.org/wikipedia/commons/5/51/Adam_Zampa_2023.jpg",
-  "tabraiz-shamsi":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/2/29/Rashid_Khan.jpg",
+  "maheesh-theekshana": "",
+  "noor-ahmad": "",
+  "mitchell-santner": "",
   "keshav-maharaj":
-    "https://upload.wikimedia.org/wikipedia/commons/f/fa/New_face_6-_Keshav_Maharaj.jpg",
-  "angkrish-raghuvanshi":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Yashasvi_Jaiswal_in_PMO_New_Delhi.jpg",
-  "sameer-rizvi":
-    "https://upload.wikimedia.org/wikipedia/commons/0/0b/Tilak_Varma_in_March_2026.png",
-  "nehal-wadhera":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4b/2_02_Phil_Salt.jpg",
-  "ayush-badoni":
-    "https://upload.wikimedia.org/wikipedia/commons/a/a8/Prithvi_shaw.png",
-  "abhishek-porel":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d7/Ishan_Kishan.jpg",
-  "vaibhav-arora":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "rasikh-salam":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "nuwan-thushara":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Waniya.jpg",
-  "fazalhaq-farooqi":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/Mohammad_Nabi-Australia.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/8/87/Keshav_Maharaj_2023.jpg",
+  "tabraiz-shamsi": "",
+  "akeal-hosein": "",
+  "allah-ghazanfar": "",
+  "waqar-salamkheil": "",
 
-  // --- EXPANDED 200+ ROSTER ADDITIONS ---
-  "manish-pandey":
-    "https://upload.wikimedia.org/wikipedia/commons/9/96/Ajinkya_Rahane_2016_%28cropped%29.jpg",
-  "karun-nair":
-    "https://upload.wikimedia.org/wikipedia/commons/7/79/Sarfaraz_Khan.jpg",
-  "mayank-agarwal":
-    "https://upload.wikimedia.org/wikipedia/commons/3/3f/SHIKHAR_DHAWAN_%2816005494418%29.jpg",
-  "nitish-rana":
-    "https://upload.wikimedia.org/wikipedia/commons/c/c3/Venkatesh_Iyer.png",
-  "mandeep-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/9/96/Ajinkya_Rahane_2016_%28cropped%29.jpg",
-  "shahrukh-khan":
-    "https://upload.wikimedia.org/wikipedia/commons/7/79/Sarfaraz_Khan.jpg",
-  "abdul-samad":
-    "https://upload.wikimedia.org/wikipedia/commons/0/0b/Tilak_Varma_in_March_2026.png",
-  "abhinav-manohar":
-    "https://upload.wikimedia.org/wikipedia/commons/a/a8/Prithvi_shaw.png",
-  "suyash-prabhudessai":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Yashasvi_Jaiswal_in_PMO_New_Delhi.jpg",
-  "priyam-garg":
-    "https://upload.wikimedia.org/wikipedia/commons/f/fb/Sai_Sudharsan_GT_vs_CSK_IPL_2023.jpg",
-  "yash-dhull":
-    "https://upload.wikimedia.org/wikipedia/commons/3/34/Shubman_Gill_2023_%28cropped%29.jpg",
-  "swastik-chikara":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Yashasvi_Jaiswal_in_PMO_New_Delhi.jpg",
-  "shaik-rasheed":
-    "https://upload.wikimedia.org/wikipedia/commons/2/27/Ruturaj_Gaikwad.jpeg",
-  "finn-allen":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
-  "dewald-brevis":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f6/David_Miller_2025_interview_%28cropped%29.png",
-  "kyle-mayers":
-    "https://upload.wikimedia.org/wikipedia/commons/8/8a/Shimron_Hetmyer.jpg",
-  "brandon-king":
-    "https://upload.wikimedia.org/wikipedia/commons/9/9f/Andre_Russell_%281%29.jpg",
-  "rassie-van-der-dussen":
-    "https://upload.wikimedia.org/wikipedia/commons/2/25/Aiden_Markram_interview_after_WTC_final_2025_%28cropped%29.png",
-  "shai-hope":
-    "https://upload.wikimedia.org/wikipedia/commons/8/8a/Shimron_Hetmyer.jpg",
-  "matthew-short":
-    "https://upload.wikimedia.org/wikipedia/commons/7/73/Mitchell_Marsh.jpg",
-  "reeza-hendricks":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f6/David_Miller_2025_interview_%28cropped%29.png",
-  "ks-bharat":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d7/Ishan_Kishan.jpg",
-  "anuj-rawat":
-    "https://upload.wikimedia.org/wikipedia/commons/f/fc/Dinesh.Karthik.jpg",
-  "kumar-kushagra":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d5/MS_Dhoni_%28Prabhav_%2723_-_RiGI_2023%29.jpg",
-  "robin-minz":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d7/Ishan_Kishan.jpg",
-  "vishnu-vinod":
-    "https://upload.wikimedia.org/wikipedia/commons/7/70/Sanju_Samson_in_PMO_New_Delhi.jpg",
-  "josh-inglis":
-    "https://upload.wikimedia.org/wikipedia/commons/0/01/Jos_Buttler_in_2023.jpg",
-  "ryan-rickelton":
-    "https://upload.wikimedia.org/wikipedia/commons/6/67/QUINTON_DE_KOCK_%2815681398316%29.jpg",
-  "akash-deep":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Siraj_%28cropped%29.jpg",
-  "chetan-sakariya":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "navdeep-saini":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "shivam-mavi":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "kartik-tyagi":
-    "https://upload.wikimedia.org/wikipedia/commons/3/36/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
-  "mohsin-khan":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "simarjeet-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "ishant-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
-  "jaydev-unadkat":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f8/2_29_Khaleel_mugshot.jpg",
-  "kuldeep-sen":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "vyshak-vijay-kumar":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Mohammad_Siraj_%28cropped%29.jpg",
-  "siddharth-kaul":
-    "https://upload.wikimedia.org/wikipedia/commons/thumb/2/27/Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg/500px-Bhuvneshwar_kumar_With_Rashid_Zirak_%28Bhuvneshwar_Kumar_cropped%29.jpg",
-  "varun-aaron":
-    "https://upload.wikimedia.org/wikipedia/commons/9/93/Umran_Malik_in_GGM.jpg",
-  "dilshan-madushanka":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/Waniya.jpg",
-  "lizaad-williams":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/Kagiso_Rabada_%2848149867991%29_%28cropped%29.jpg",
-  "nathan-ellis":
-    "https://upload.wikimedia.org/wikipedia/commons/d/d9/2018_Josh_Hazlewood_%28cropped%29.jpg",
-  "jhye-richardson":
-    "https://upload.wikimedia.org/wikipedia/commons/6/69/Pat_Cummins_fielding_Ashes_2021_%28cropped%29.jpg",
-  "reece-topley":
-    "https://upload.wikimedia.org/wikipedia/commons/1/1b/The_Prime_Minister_welcomes_the_World_Cup_winning_cricketers_%2852764650104%29_-_Sam_Curran_%28cropped%29.jpg",
-  "gus-atkinson":
-    "https://upload.wikimedia.org/wikipedia/commons/6/69/Pat_Cummins_fielding_Ashes_2021_%28cropped%29.jpg",
-  "taskin-ahmed":
-    "https://upload.wikimedia.org/wikipedia/commons/a/a3/Mustafizur_Rahman_%284%29_%28cropped%29.jpg",
-  "harpreet-brar":
-    "https://upload.wikimedia.org/wikipedia/commons/3/36/Prime_Minister_Of_Bharat_Shri_Narendra_Damodardas_Modi_with_Arshdeep_Singh_Family_%28Cropped%29.jpg",
-  "swapnil-singh":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ad/Axar_Patel_in_PMO_New_Delhi.jpg",
-  "deepak-hooda":
-    "https://upload.wikimedia.org/wikipedia/commons/6/63/Shivam_Dube_in_PMO_New_Delhi.jpg",
-  "vijay-shankar":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/Washington_Sundar.jpg",
-  "krishnappa-gowtham":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2c/PM_Shri_Narendra_Modi_with_Ravindra_Jadeja_%28Cropped%29.jpg",
-  "jalaj-saxena":
-    "https://upload.wikimedia.org/wikipedia/commons/0/05/Shabaz_Ahmed_Senior.jpg",
-  "jason-holder":
-    "https://upload.wikimedia.org/wikipedia/commons/9/9f/Andre_Russell_%281%29.jpg",
-  "azmatullah-omarzai":
-    "https://upload.wikimedia.org/wikipedia/commons/4/49/Mohammad_Nabi-Australia.jpg",
-  "chris-woakes":
-    "https://upload.wikimedia.org/wikipedia/commons/1/1b/The_Prime_Minister_welcomes_the_World_Cup_winning_cricketers_%2852764650104%29_-_Sam_Curran_%28cropped%29.jpg",
-  "daniel-sams":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/2018.01.21.15.22.25-Stoinis_%2839081521620%29.jpg",
-  "michael-bracewell":
-    "https://upload.wikimedia.org/wikipedia/commons/2/23/2018.02.03.22.23.14-AUSvNZL_T20_AUS_innings%2C_SCG_%2839533156665%29.jpg",
-  "roelof-van-der-merwe":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f6/David_Miller_2025_interview_%28cropped%29.png",
-  "karn-sharma":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Piyush_Chawla_2019.jpg",
-  "amit-mishra":
-    "https://upload.wikimedia.org/wikipedia/commons/d/da/Piyush_Chawla_2019.jpg",
-  "shreyas-gopal":
-    "https://upload.wikimedia.org/wikipedia/commons/d/df/Yuzvendra_Chahal_in_PMO_New_Delhi.jpg",
-  "kumar-kartikeya":
-    "https://upload.wikimedia.org/wikipedia/commons/a/ae/Suyash_Sharma.png",
-  "murugan-ashwin":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/4_15_Sai_Kishore.jpg",
-  "jagadeesha-suchith":
-    "https://upload.wikimedia.org/wikipedia/commons/2/2b/4_15_Sai_Kishore.jpg",
-  "allah-ghazanfar":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Rashid_Khan.jpg",
-  "waqar-salamkheil":
-    "https://upload.wikimedia.org/wikipedia/commons/7/71/Rashid_Khan.jpg",
-  "akeal-hosein":
-    "https://upload.wikimedia.org/wikipedia/commons/8/8a/Shimron_Hetmyer.jpg",
-  "umesh-yadav":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4c/Umesh_Yadav_2016_%28cropped%29.jpg",
-  "wriddhiman-saha":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4b/2_02_Phil_Salt.jpg",
-  "robin-uthappa":
-    "https://upload.wikimedia.org/wikipedia/commons/3/3f/SHIKHAR_DHAWAN_%2816005494418%29.jpg",
-  "ambati-rayudu":
-    "https://upload.wikimedia.org/wikipedia/commons/9/96/Ajinkya_Rahane_2016_%28cropped%29.jpg",
-  "suresh-raina":
-    "https://upload.wikimedia.org/wikipedia/commons/5/53/Suresh_Raina_2016_%28cropped%29.jpg",
-  "kieron-pollard":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f0/Kieron_Pollard_2016_%28cropped%29.jpg",
-  "dj-bravo":
-    "https://upload.wikimedia.org/wikipedia/commons/0/07/Dwayne_Bravo_2016_%28cropped%29.jpg",
-  "shane-watson":
-    "https://upload.wikimedia.org/wikipedia/commons/8/85/Shane_Watson_%28cropped%29.jpg",
-  "lasith-malinga":
-    "https://upload.wikimedia.org/wikipedia/commons/e/ec/Lasith_Malinga_2016_%28cropped%29.jpg",
-  "chris-gayle":
-    "https://upload.wikimedia.org/wikipedia/commons/7/7b/Chris_Gayle_2016_%28cropped%29.jpg",
+  // ==========================================
+  // --- IPL ICONS & LEGENDS ---
+  // ==========================================
   "ab-de-villiers":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b3/AB_de_Villiers_2016_%28cropped%29.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/7/78/AB_de_Villiers_at_World_Cup_2015.jpg",
+  "chris-gayle":
+    "https://upload.wikimedia.org/wikipedia/commons/1/1e/Chris_Gayle_in_2015.jpg",
+  "dj-bravo":
+    "https://upload.wikimedia.org/wikipedia/commons/6/6b/Bravo_at_IIFA_2017_Green_Carpet.jpg",
   "dale-steyn":
-    "https://upload.wikimedia.org/wikipedia/commons/7/73/Dale_Steyn_2016_%28cropped%29.jpg",
-  "sherfane-rutherford":
-    "https://upload.wikimedia.org/wikipedia/commons/2/22/Andre_Russell_2016_%28cropped%29.jpg",
-  "ashton-agar":
-    "https://upload.wikimedia.org/wikipedia/commons/4/47/Adam_Zampa_at_the_WACA_March_2022.jpg",
-  "marnus-labuschagne":
-    "https://upload.wikimedia.org/wikipedia/commons/7/7b/Steve_Smith_at_the_SCG_Jan_2023.jpg",
-  "ben-stokes":
-    "https://upload.wikimedia.org/wikipedia/commons/3/37/Ben_Stokes_2016_%28cropped%29.jpg",
-  "jofra-archer":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b8/Jofra_Archer_2019_%28cropped%29.jpg",
-  "mark-wood":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4c/Mark_Wood_2019_%28cropped%29.jpg",
-  "chris-jordan":
-    "https://upload.wikimedia.org/wikipedia/commons/1/15/Chris_Jordan_2016_%28cropped%29.jpg",
-  "tom-curran":
-    "https://upload.wikimedia.org/wikipedia/commons/2/22/Sam_Curran_2023.jpg",
-  "shamar-joseph":
-    "https://upload.wikimedia.org/wikipedia/commons/2/22/Andre_Russell_2016_%28cropped%29.jpg",
-  "tim-southee":
-    "https://upload.wikimedia.org/wikipedia/commons/b/b9/Tim_Southee_2016_%28cropped%29.jpg",
-  "alex-hales":
-    "https://upload.wikimedia.org/wikipedia/commons/4/4b/2_02_Phil_Salt.jpg",
-  "rilee-rossouw":
-    "https://upload.wikimedia.org/wikipedia/commons/f/f6/David_Miller_2025_interview_%28cropped%29.png",
+    "https://upload.wikimedia.org/wikipedia/commons/7/75/Dale_Steyn_2012.jpg",
+  "lasith-malinga":
+    "https://upload.wikimedia.org/wikipedia/commons/9/99/Lasith_Malinga_2012.jpg",
+  "kieron-pollard":
+    "https://upload.wikimedia.org/wikipedia/commons/3/38/Kieron_Pollard_2012.jpg",
+  "shane-watson":
+    "https://upload.wikimedia.org/wikipedia/commons/d/d7/Shane_Watson_2015.jpg",
 };
 
 /**
@@ -518,11 +353,12 @@ const portraitMemoryCache = new Map<string, string>();
 const PORTRAIT_STORAGE_PREFIX = "cinebid_cricketer_photo_";
 
 /**
- * Resolves a real-time high-resolution photograph for a cricketer.
+ * Resolves a real-time authentic photograph for a cricketer.
  * 1. Checks in-memory cache
- * 2. Checks verified direct seed mappings
+ * 2. Checks verified direct seed mappings (exact ID only)
  * 3. Checks localStorage
- * 4. Fallback Wikipedia API dynamic query
+ * 4. Fallback Wikipedia API dynamic query (strictly about the cricketer)
+ * 5. If none available, returns "" (NEVER falls back to another player's face).
  */
 export async function getRealCricketerPhoto(
   playerId: string,
@@ -536,19 +372,11 @@ export async function getRealCricketerPhoto(
     return portraitMemoryCache.get(cleanId)!;
   }
 
-  // 2. Direct seed lookup
+  // 2. Direct seed lookup (exact ID match only)
   if (CRICKETER_PORTRAIT_SEEDS[cleanId]) {
     const rawUrl = CRICKETER_PORTRAIT_SEEDS[cleanId]!;
     portraitMemoryCache.set(cleanId, rawUrl);
     return rawUrl;
-  }
-
-  // Check substring seed match
-  for (const [seedId, seedUrl] of Object.entries(CRICKETER_PORTRAIT_SEEDS)) {
-    if (cleanId.includes(seedId) || seedId.includes(cleanId)) {
-      portraitMemoryCache.set(cleanId, seedUrl);
-      return seedUrl;
-    }
   }
 
   // 3. LocalStorage cache
@@ -580,8 +408,24 @@ export async function getRealCricketerPhoto(
           });
           if (resp.ok) {
             const data = await resp.json();
+            const desc = (data.description || "").toLowerCase();
+            const extract = (data.extract || "").toLowerCase();
+            const isCricketer =
+              desc.includes("cricket") ||
+              extract.includes("cricket") ||
+              extract.includes("ipl") ||
+              extract.includes("batsman") ||
+              extract.includes("bowler");
+
             const sourceUrl = data.originalimage?.source || data.thumbnail?.source;
-            if (sourceUrl && typeof sourceUrl === "string" && sourceUrl.startsWith("http")) {
+            if (
+              isCricketer &&
+              sourceUrl &&
+              typeof sourceUrl === "string" &&
+              sourceUrl.startsWith("http") &&
+              !sourceUrl.includes("Question_book") &&
+              !sourceUrl.includes("Disambig")
+            ) {
               const clean = sourceUrl.split("?")[0] || sourceUrl;
               portraitMemoryCache.set(cleanId, clean);
               try {
@@ -601,7 +445,8 @@ export async function getRealCricketerPhoto(
     }
   }
 
-  // 5. Default fallback
-  const defaultRaw = CRICKETER_PORTRAIT_SEEDS["virat-kohli"] || "";
-  return defaultRaw;
+  // 5. If not found or not authentic, return empty string.
+  // NEVER return another cricketer's photo.
+  portraitMemoryCache.set(cleanId, "");
+  return "";
 }
