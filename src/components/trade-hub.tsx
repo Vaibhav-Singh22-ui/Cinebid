@@ -44,8 +44,9 @@ export function TradeHubModal({
 }: TradeHubProps) {
   const isCricket = room.auctionType === "CRICKET" || (room.roomCode || "").startsWith("IPL");
   const myPlayer = room.players.find((p) => p.id === currentUser.id);
+  const isTradingClosed = room.status === "RESULTS" || Boolean(room.portfolioRankings && room.portfolioRankings.length > 0);
   const otherFranchises = useMemo(
-    () => room.players.filter((p) => p.id !== currentUser.id && (p.movies || []).length > 0),
+    () => room.players.filter((p) => p.id !== currentUser.id),
     [room.players, currentUser.id],
   );
 
@@ -107,6 +108,11 @@ export function TradeHubModal({
     setErrorMsg("");
     setSuccessMsg("");
 
+    if (isTradingClosed) {
+      setErrorMsg("Trading is closed. The tournament / evaluation results are already finalized.");
+      return;
+    }
+
     if (!targetFranchiseId) {
       setErrorMsg("Please select a target franchise to trade with.");
       return;
@@ -147,6 +153,12 @@ export function TradeHubModal({
 
   const handleRespond = (tradeId: string, accept: boolean) => {
     setErrorMsg("");
+
+    if (isTradingClosed) {
+      setErrorMsg("Trading is closed. The tournament / evaluation results are already finalized.");
+      return;
+    }
+
     const res = respondToTrade(room.roomCode, tradeId, accept, currentUser.id);
     if (!res.success) {
       setErrorMsg(res.message || "Action failed.");
@@ -200,6 +212,67 @@ export function TradeHubModal({
             <X size={18} />
           </button>
         </div>
+
+        {/* Live Auction Floor Alert Bar */}
+        {room.status === "AUCTION" && (
+          <div className="bg-gradient-to-r from-amber-950/80 via-black/80 to-amber-950/80 border-b border-gold/40 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 text-xs flex-wrap">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping flex-shrink-0" />
+              <span className="font-black text-gold uppercase tracking-wider text-[11px] flex items-center gap-1.5 flex-shrink-0">
+                🔴 LIVE AUCTION IN PROGRESS:
+              </span>
+              {room.moviePool && room.moviePool[room.currentMovieIndex] && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="font-bold text-cream">
+                    {room.moviePool[room.currentMovieIndex]?.title}
+                  </span>
+                  <span className="font-mono font-black text-gold px-1.5 py-0.5 rounded bg-black/60 border border-gold/30 text-[10px]">
+                    {room.currentBid ? formatCr(room.currentBid) : "Base Price"}
+                  </span>
+                  {room.currentBidderName ? (
+                    <span className="text-[10px] text-muted-foreground">
+                      (Leader: <strong className="text-gold">{room.currentBidderName}</strong>)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">
+                      (No bids placed yet)
+                    </span>
+                  )}
+                  {room.isSold && (
+                    <span className="text-[10px] font-bold text-amber-300 px-1.5 py-0.2 rounded bg-amber-950 border border-amber-500/40">
+                      🔨 Gavel Down
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-emerald-400 font-semibold hidden md:inline">
+                💡 Cash gained in trade is added directly to your purse for this live auction!
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-2.5 py-1 rounded-lg bg-gold/20 hover:bg-gold border border-gold/50 text-gold hover:text-black font-bold text-[11px] transition-all cursor-pointer flex items-center gap-1 flex-shrink-0"
+              >
+                <span>Return to Floor</span>
+                <span>→</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isTradingClosed && (
+          <div className="bg-red-950/70 border-b border-red-500/50 px-4 sm:px-6 py-2 flex items-center justify-between gap-2 text-xs text-red-300">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="text-red-400 flex-shrink-0" />
+              <span className="font-bold">
+                Trading Window Closed: The tournament simulation and final jury evaluation are finalized.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Tab Navigation */}
         <div className="flex items-center gap-2 px-4 sm:px-6 pt-3 border-b border-border/60 bg-black/20 overflow-x-auto scrollbar-none">

@@ -858,8 +858,12 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     if (Array.isArray(r.players)) {
       r.players.forEach((p) => {
         p.initialBudget = b;
-        const spent = (p.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-        p.budget = Math.round((b - spent) * 100) / 100;
+        if (typeof p.budget !== "number" || isNaN(p.budget)) {
+          const spent = (p.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+          p.budget = Math.round((b - spent) * 100) / 100;
+        } else {
+          p.budget = Math.round(p.budget * 100) / 100;
+        }
       });
     }
     return r;
@@ -1485,6 +1489,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const isHost = Boolean(room && room.hostId === currentUser.id);
   const [kickCandidate, setKickCandidate] = useState<Player | null>(null);
   const [kickingInProgress, setKickingInProgress] = useState(false);
+  const [isTradeHubOpen, setIsTradeHubOpen] = useState(false);
 
   const handleConfirmKick = async () => {
     if (!kickCandidate || !room) return;
@@ -1702,11 +1707,15 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   for (const p of room.players) {
     p.movies = Array.isArray(p.movies) ? p.movies : [];
     p.initialBudget = defaultStartingBudget;
-    if (p.movies.length === 0) {
-      p.budget = defaultStartingBudget;
+    if (typeof p.budget !== "number" || isNaN(p.budget)) {
+      if (p.movies.length === 0) {
+        p.budget = defaultStartingBudget;
+      } else {
+        const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        p.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+      }
     } else {
-      const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-      p.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+      p.budget = Math.round(p.budget * 100) / 100;
     }
   }
 
@@ -1729,13 +1738,19 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     };
   } else {
     me.initialBudget = defaultStartingBudget;
-    if ((me.movies?.length || 0) === 0) {
-      me.budget = defaultStartingBudget;
+    if (typeof me.budget !== "number" || isNaN(me.budget)) {
+      if ((me.movies?.length || 0) === 0) {
+        me.budget = defaultStartingBudget;
+      } else {
+        const spent = (me.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        me.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+      }
     } else {
-      const spent = (me.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-      me.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+      me.budget = Math.round(me.budget * 100) / 100;
     }
   }
+
+  const pendingTradeCount = (room.trades || []).filter((t) => t.toPlayerId === currentUser.id && t.status === "PENDING").length;
 
   const isWinning = room.currentBidderId === me.id;
   const isMeOut = room.outPlayerIds?.includes(me.id);
@@ -1954,6 +1969,8 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
         isPaused={room.isPaused}
         onTogglePause={isHost ? handleTogglePause : undefined}
         onUpdateTimer={isHost ? handleUpdateTimer : undefined}
+        onOpenTrades={() => setIsTradeHubOpen(true)}
+        pendingTradeCount={pendingTradeCount}
         isHost={isHost}
       />
 
@@ -2752,6 +2769,26 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
               </span>
             </div>
 
+            {/* Live Auction Player & Cash Trade Button */}
+            <button
+              type="button"
+              onClick={() => setIsTradeHubOpen(true)}
+              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-600 via-orange-600 to-amber-500 hover:from-amber-500 hover:to-orange-500 text-white font-black text-xs uppercase tracking-wider shadow-md flex items-center justify-between transition-all cursor-pointer border border-amber-400/40 hover:scale-[1.01]"
+              title="Trade cricketers and transfer purse cash with other franchises during the live auction"
+            >
+              <div className="flex items-center gap-2">
+                <ArrowLeftRight size={14} className="text-amber-200 animate-pulse" />
+                <span>Trade Players & Cash</span>
+              </div>
+              {pendingTradeCount > 0 ? (
+                <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-mono font-black animate-bounce shadow">
+                  {pendingTradeCount} OFFER{pendingTradeCount > 1 ? "S" : ""}
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-200/90 font-mono font-semibold">Active</span>
+              )}
+            </button>
+
             <div className="flex flex-col gap-1.5 max-h-[200px] overflow-y-auto pr-1 custom-scrollbar">
               {sortedFranchises.map((p) => {
                 const isMe = p.id === currentUser.id;
@@ -3184,6 +3221,16 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
         onClose={() => setKickCandidate(null)}
         onConfirm={handleConfirmKick}
       />
+
+      {room && (
+        <TradeHubModal
+          room={room}
+          currentUser={currentUser}
+          isOpen={isTradeHubOpen}
+          onClose={() => setIsTradeHubOpen(false)}
+          onRoomUpdated={(updated) => setRoom({ ...updated })}
+        />
+      )}
     </Page>
   );
 }

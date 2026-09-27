@@ -634,11 +634,15 @@ export function saveRoom(
       room.players.forEach((p) => {
         if (!p.movies) p.movies = [];
         p.initialBudget = startingBudget;
-        if (p.movies.length === 0) {
-          p.budget = startingBudget;
+        if (typeof p.budget !== "number" || isNaN(p.budget)) {
+          if (p.movies.length === 0) {
+            p.budget = startingBudget;
+          } else {
+            const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+            p.budget = Math.round((startingBudget - spent) * 100) / 100;
+          }
         } else {
-          const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-          p.budget = Math.round((startingBudget - spent) * 100) / 100;
+          p.budget = Math.round(p.budget * 100) / 100;
         }
       });
     }
@@ -781,6 +785,7 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
           current_bidder_id: room.currentBidderId,
           current_bidder_name: room.currentBidderName,
           seconds_remaining: room.secondsRemaining,
+          settings: richSettings,
           updated_at: new Date().toISOString(),
         })
         .eq("room_code", code);
@@ -801,7 +806,9 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
         const playerRows = playersToUpsert.map((p) => {
           const movies = Array.isArray(p.movies) ? p.movies : [];
           let validBudget: number;
-          if (movies.length === 0) {
+          if (typeof p.budget === "number" && !isNaN(p.budget)) {
+            validBudget = Math.round(p.budget * 100) / 100;
+          } else if (movies.length === 0) {
             validBudget = startingBudget;
           } else {
             const spent = movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
@@ -908,11 +915,15 @@ export function getRoom(roomCode: string): RoomState | null {
           parsed.players.forEach((p: any) => {
             if (!p.movies) p.movies = [];
             p.initialBudget = startingBudget;
-            if (p.movies.length === 0) {
-              p.budget = startingBudget;
+            if (typeof p.budget !== "number" || isNaN(p.budget)) {
+              if (p.movies.length === 0) {
+                p.budget = startingBudget;
+              } else {
+                const spent = p.movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+                p.budget = Math.round((startingBudget - spent) * 100) / 100;
+              }
             } else {
-              const spent = p.movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-              p.budget = Math.round((startingBudget - spent) * 100) / 100;
+              p.budget = Math.round(p.budget * 100) / 100;
             }
           });
         }
@@ -1003,7 +1014,9 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
         const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => {
           const movies = Array.isArray(p.movies) ? p.movies : [];
           let safeB: number;
-          if (movies.length === 0) {
+          if (typeof p.budget === "number" && !isNaN(p.budget)) {
+            safeB = p.budget;
+          } else if (movies.length === 0) {
             safeB = defaultStartingBudget;
           } else {
             const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
@@ -1039,8 +1052,9 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
             const existing = playerMap.get(lp.id);
             if (!existing) {
               const movies = Array.isArray(lp.movies) ? lp.movies : [];
-              const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-              const budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+              const budget = (typeof lp.budget === "number" && !isNaN(lp.budget))
+                ? Math.round(lp.budget * 100) / 100
+                : (movies.length === 0 ? defaultStartingBudget : Math.round((defaultStartingBudget - movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0)) * 100) / 100);
               playerMap.set(lp.id, {
                 ...lp,
                 budget,
@@ -1049,8 +1063,11 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
               });
             } else {
               const bestMovies = (lp.movies?.length || 0) >= (existing.movies?.length || 0) ? (lp.movies || []) : (existing.movies || []);
-              const spent = bestMovies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-              const budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+              const budget = (typeof lp.budget === "number" && !isNaN(lp.budget))
+                ? Math.round(lp.budget * 100) / 100
+                : (typeof existing.budget === "number" && !isNaN(existing.budget)
+                  ? Math.round(existing.budget * 100) / 100
+                  : Math.round((defaultStartingBudget - bestMovies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0)) * 100) / 100);
               playerMap.set(lp.id, {
                 ...existing,
                 ...lp,
@@ -1297,6 +1314,10 @@ export function subscribeToMultiplayerRoom(
       .on("broadcast", { event: "game_started" }, handleIncomingBroadcast)
       .on("broadcast", { event: "round_advanced" }, handleIncomingBroadcast)
       .on("broadcast", { event: "timer_update" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "trade_proposed" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "trade_rejected" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "trade_completed" }, handleIncomingBroadcast)
+      .on("broadcast", { event: "trade_cancelled" }, handleIncomingBroadcast)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "rooms", filter: `room_code=eq.${code}` },
@@ -1363,11 +1384,15 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
     room.players[playerIndex]!.initialBudget = startingBudget;
-    if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
-      room.players[playerIndex]!.budget = startingBudget;
+    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+      if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
+        room.players[playerIndex]!.budget = startingBudget;
+      } else {
+        const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        room.players[playerIndex]!.budget = Math.round((startingBudget - spent) * 100) / 100;
+      }
     } else {
-      const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-      room.players[playerIndex]!.budget = Math.round((startingBudget - spent) * 100) / 100;
+      room.players[playerIndex]!.budget = Math.round(room.players[playerIndex]!.budget * 100) / 100;
     }
   } else if (room.players.length < room.settings.maxPlayers) {
     const newPlayer: Player = {
@@ -1539,11 +1564,15 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
     room.players[playerIndex]!.initialBudget = fallbackStartingBudget;
-    if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
-      room.players[playerIndex]!.budget = fallbackStartingBudget;
+    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+      if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
+        room.players[playerIndex]!.budget = fallbackStartingBudget;
+      } else {
+        const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        room.players[playerIndex]!.budget = Math.round((fallbackStartingBudget - spent) * 100) / 100;
+      }
     } else {
-      const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
-      room.players[playerIndex]!.budget = Math.round((fallbackStartingBudget - spent) * 100) / 100;
+      room.players[playerIndex]!.budget = Math.round(room.players[playerIndex]!.budget * 100) / 100;
     }
   } else if (room.players.length < maxPlayers) {
     const newPlayer: Player = {
@@ -2350,6 +2379,10 @@ export function proposeTrade(
   const room = getRoom(code);
   if (!room) return { success: false, message: "Room not found" };
 
+  if (room.status === "RESULTS" || (room.portfolioRankings && room.portfolioRankings.length > 0)) {
+    return { success: false, message: "Trading window is closed. Tournament matches and final results are already finalized." };
+  }
+
   const fromPlayer = room.players.find((p) => p.id === fromPlayerId);
   const toPlayer = room.players.find((p) => p.id === toPlayerId);
   if (!fromPlayer || !toPlayer) return { success: false, message: "Franchise not found in room." };
@@ -2373,11 +2406,20 @@ export function proposeTrade(
     }
   }
 
-  // Validate cash adjustment affordability
-  if (cashAdjustment > 0 && fromPlayer.budget < cashAdjustment) {
+  // Validate cash adjustment affordability (safeguarding cash currently pledged to active live bid)
+  const fromCommitted = (room.status === "AUCTION" && room.currentBidderId === fromPlayer.id) ? (room.currentBid || 0) : 0;
+  const fromAvailable = Math.max(0, fromPlayer.budget - fromCommitted);
+
+  const toCommitted = (room.status === "AUCTION" && room.currentBidderId === toPlayer.id) ? (room.currentBid || 0) : 0;
+  const toAvailable = Math.max(0, toPlayer.budget - toCommitted);
+
+  if (cashAdjustment > 0 && fromAvailable < cashAdjustment) {
+    if (fromCommitted > 0) {
+      return { success: false, message: `Cannot offer ${formatCr(cashAdjustment)}: ${formatCr(fromCommitted)} is currently pledged to your leading auction bid.` };
+    }
     return { success: false, message: `Insufficient purse! You only have ${formatCr(fromPlayer.budget)} available.` };
   }
-  if (cashAdjustment < 0 && toPlayer.budget < Math.abs(cashAdjustment)) {
+  if (cashAdjustment < 0 && toAvailable < Math.abs(cashAdjustment)) {
     return { success: false, message: `Recipient cannot afford ${formatCr(Math.abs(cashAdjustment))} cash request.` };
   }
 
@@ -2425,6 +2467,10 @@ export function respondToTrade(
   const room = getRoom(code);
   if (!room) return { success: false, message: "Room not found" };
 
+  if (room.status === "RESULTS" || (room.portfolioRankings && room.portfolioRankings.length > 0)) {
+    return { success: false, message: "Trading window is closed. Tournament matches and final results are already finalized." };
+  }
+
   if (!room.trades) room.trades = [];
   const trade = room.trades.find((t) => t.id === tradeId);
   if (!trade) return { success: false, message: "Trade offer not found." };
@@ -2449,6 +2495,22 @@ export function respondToTrade(
   const toPlayer = room.players.find((p) => p.id === trade.toPlayerId);
   if (!fromPlayer || !toPlayer) {
     return { success: false, message: "One of the franchises is no longer in the room." };
+  }
+
+  const tradeCash = Number(trade.cashAdjustment) || 0;
+
+  // Validate cash affordability with respect to active live bids
+  if (tradeCash < 0) {
+    const required = Math.abs(tradeCash);
+    const toCommitted = (room.status === "AUCTION" && room.currentBidderId === toPlayer.id) ? (room.currentBid || 0) : 0;
+    if (toPlayer.budget - toCommitted < required) {
+      return { success: false, message: `Cannot accept: ${formatCr(required)} required, but ${formatCr(toCommitted)} is pledged to your active auction bid.` };
+    }
+  } else if (tradeCash > 0) {
+    const fromCommitted = (room.status === "AUCTION" && room.currentBidderId === fromPlayer.id) ? (room.currentBid || 0) : 0;
+    if (fromPlayer.budget - fromCommitted < tradeCash) {
+      return { success: false, message: `Trade voided: Proposer no longer has sufficient purse (${formatCr(tradeCash)}) available.` };
+    }
   }
 
   // Re-verify ownership at moment of acceptance

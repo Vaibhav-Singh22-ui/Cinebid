@@ -331,6 +331,43 @@ In an 8-player IPL Mega Auction created with a 150 Cr starting purse, only two p
 
 ---
 
+## 16. In-Auction Trading & Live Purse Re-Usability Architecture
+
+### Problem Analysis & Diagnosis
+1. **Purse Wipeout on Frame Renders**:
+   - In previous iterations, `saveRoom`, `getRoom`, `syncRemoteRoomIntoLocal`, `joinRoom`, `room-server-relay`, and `AuctionScreen` were iteratively calculating `p.budget = Math.round((startingBudget - spent) * 100) / 100` on every render loop and database sync.
+   - When Franchise A sold a player to Franchise B for ₹20 Cr cash, Franchise A's budget was correctly increased by ₹20 Cr in memory. However, the very next render loop recalculated `budget = startingBudget - sum(purchasePrice)`, instantly erasing the ₹20 Cr!
+   - This made it impossible to use trade cash to buy cricketers in the ongoing auction.
+2. **Auction Round Interruption Fears**:
+   - The user expressed concern that opening a trade modal or trading in between lots would conclude the auction round or end active bidding.
+   - Because the 30-second live auction timer ticks in the background on the host, players opening trade menus without live telemetry lost visibility of the auction floor.
+
+### Permanent Fixes
+1. **Preserved Numerical Budget Architecture**:
+   - Updated `saveRoom`, `getRoom`, `syncRemoteRoomIntoLocal`, `joinRoom`, `joinRoomAsync`, `room-server-relay`, `LobbyScreen.sanitizeRoom`, and `AuctionScreen`:
+   - `p.budget` is now only initialized or calculated from `startingBudget - spent` if `typeof p.budget !== "number" || isNaN(p.budget)`.
+   - Valid numerical budgets (reflecting cash gained or spent during trades) are preserved and never overwritten with `startingBudget - spent`.
+2. **Instant Purse Re-Usability in Live Bidding**:
+   - When a trade is accepted in `respondToTrade`, `fromPlayer.budget` and `toPlayer.budget` atomically update and trigger room state broadcasts.
+   - `AuctionScreen` immediately updates the franchise's purse in the bidding console.
+   - The user can place bids immediately using their newly acquired trade cash.
+3. **Auction Continuity & Non-Concluding Guarantees**:
+   - Opening or reviewing trades does NOT conclude, pause, or end the active auction round.
+   - `TradeHubModal` is rendered as an overlay dialog without unmounting `AuctionScreen` or altering auction timers.
+4. **Live Auction Floor Alert Bar in `TradeHubModal`**:
+   - When `room.status === "AUCTION"`, `TradeHubModal` renders a sticky live status bar at the top displaying:
+     - Current cricketer on the block (title, high bid, leading franchise name, gavel status).
+     - Informational pill: *"💡 Cash gained in trade is added directly to your purse for this live auction!"*
+     - Quick *"Return to Floor →"* action button so players can jump straight back to bidding in one click.
+5. **Trade Scope Boundaries**:
+   - Added checks in `proposeTrade` and `respondToTrade` rejecting trades if `room.status === "RESULTS" || room.portfolioRankings?.length > 0`.
+   - In `TradeHubModal`, if the tournament results are finalized, a clear notice is shown: *"Trading Window Closed: The tournament simulation and final jury evaluation are finalized."*
+6. **Live Header & Right Column Triggers**:
+   - Added a `Trade` button with live pending offer badge to `AuctionTopTabs`.
+   - Added a `Trade Players & Cash` button with animated offer counter to the Right Column above the Franchises list in `AuctionScreen`.
+
+---
+
 ## Summary Checklist for Future Work
 - [x] All 58 cricketers have distinct, verified photo URLs.
 - [x] Overseas limits: up to 7 in squad, max 4 in Playing 11.
@@ -343,9 +380,12 @@ In an 8-player IPL Mega Auction created with a 150 Cr starting purse, only two p
 - [x] Chat messages decoupled from core room state mutations.
 - [x] Temporal Dead Zone (TDZ) and TypeScript errors resolved (0 errors).
 - [x] Authoritative 150 Cr starting purse enforced for all 8 players in IPL games.
-- [x] Post-auction player trading with cash sweeteners and atomic anti-double-spend execution.
+- [x] In-auction player and cash trading with atomic anti-double-spend and bid protection.
+- [x] Trade cash is immediately usable to bid on and purchase cricketers in ongoing auction.
+- [x] Opening trade hub during auction does not conclude or interrupt the active round.
+- [x] Live auction floor ticker bar embedded in Trade Hub modal.
+- [x] Trading automatically disabled once final tournament results are concluded.
 - [x] Authoritative Host Kick with permanent blacklist, trade auto-cancellation, and instant redirect.
-- [x] Live auction header kept clean; trading restricted strictly to post-auction / pre-evaluation window.
 - [x] Groq AI model updated to active endpoints (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`) restoring live AI simulation.
 - [x] Groq capacity verified for daily 8-player game simulations (33 requests / ~20k tokens per tournament).
 - [x] Strict photo authentication policy: no fake/shared faces, elegant monogram crest fallback.

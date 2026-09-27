@@ -936,6 +936,8 @@ export function AuctionTopTabs({
   onTogglePause,
   isHost,
   onUpdateTimer,
+  onOpenTrades,
+  pendingTradeCount,
 }: {
   moviePool: Movie[];
   players: Player[];
@@ -946,6 +948,8 @@ export function AuctionTopTabs({
   onTogglePause?: (() => void) | undefined;
   isHost?: boolean | undefined;
   onUpdateTimer?: ((seconds: number, isExtension?: boolean | undefined) => void) | undefined;
+  onOpenTrades?: (() => void) | undefined;
+  pendingTradeCount?: number | undefined;
 }) {
   const isCricket = auctionType === "CRICKET";
   const [activeTab, setActiveTab] = useState<"RULES" | "SOLD" | "UNSOLD" | "UPCOMING" | "ALL" | "TIMER" | "SQUADS" | null>(null);
@@ -1174,6 +1178,27 @@ export function AuctionTopTabs({
               {players.length}
             </span>
           </button>
+
+          {onOpenTrades && (
+            <button
+              type="button"
+              onClick={onOpenTrades}
+              className="px-3 py-1.5 rounded-xl border text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 border-amber-500/50 text-amber-300 hover:border-amber-400 hover:bg-amber-500/30 shadow-sm hover:scale-105 active:scale-95"
+              title="Open Trade Hub: Exchange cricketers & cash purse during the auction"
+            >
+              <ArrowLeftRight size={13} className="text-amber-400" />
+              <span>Trade</span>
+              {typeof pendingTradeCount === "number" && pendingTradeCount > 0 ? (
+                <span className="px-1.5 py-0.2 rounded-full bg-red-600 text-white text-[10px] font-mono font-black animate-pulse shadow">
+                  {pendingTradeCount}
+                </span>
+              ) : (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-950/80 text-amber-300 text-[10px] font-mono border border-amber-500/30">
+                  Live
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Right Utility Buttons: Mute Sound & Host Pause */}

@@ -134,7 +134,9 @@ export function saveStoredRoom(roomCode: string, roomData: any): any {
     toSave.players = toSave.players.map((p: any) => {
       const movies = Array.isArray(p.movies) ? p.movies : [];
       let budget: number;
-      if (movies.length === 0) {
+      if (typeof p.budget === "number" && !isNaN(p.budget)) {
+        budget = Math.round(p.budget * 100) / 100;
+      } else if (movies.length === 0) {
         budget = defaultBudget;
       } else {
         const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
@@ -207,7 +209,11 @@ export function addPlayerToStoredRoom(roomCode: string, player: any): { success:
     const prev = room.players[existingIndex];
     const movies = Array.isArray(prev.movies) ? prev.movies : (Array.isArray(player.movies) ? player.movies : []);
     let finalBudget = startingBudget;
-    if (movies.length > 0) {
+    if (typeof prev.budget === "number" && !isNaN(prev.budget)) {
+      finalBudget = Math.round(prev.budget * 100) / 100;
+    } else if (typeof player.budget === "number" && !isNaN(player.budget)) {
+      finalBudget = Math.round(player.budget * 100) / 100;
+    } else if (movies.length > 0) {
       const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
       finalBudget = Math.round((startingBudget - spent) * 100) / 100;
     }
