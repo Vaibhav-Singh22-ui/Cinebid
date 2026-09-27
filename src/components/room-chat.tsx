@@ -235,15 +235,6 @@ export function RoomChat({
 
     void loadSupabaseMessages();
 
-    // Listen to local room updates
-    const handleRoomUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent<{ roomCode: string }>;
-      if (customEvent.detail?.roomCode === code) {
-        loadLocalMessages();
-      }
-    };
-    window.addEventListener("cinebid_room_update", handleRoomUpdate);
-
     // Supabase Realtime Channel
     const channelName = `cinebid_chat_${code}`;
     const channel = supabase
@@ -301,7 +292,6 @@ export function RoomChat({
 
     return () => {
       active = false;
-      window.removeEventListener("cinebid_room_update", handleRoomUpdate);
       void supabase.removeChannel(channel);
     };
   }, [code, activePlayerName, soundEnabled, scrollToBottom]);
@@ -325,7 +315,7 @@ export function RoomChat({
       timestamp: now,
     };
 
-    // 1. Immediately store in local room state
+    // 1. Immediately store in local room state silently without triggering whole-room saveRoom or auction re-renders
     const room = getRoom(code);
     if (room) {
       room.chatMessages = room.chatMessages || [];
@@ -336,7 +326,11 @@ export function RoomChat({
         text: body,
         timestamp: now,
       });
-      saveRoom(room);
+      try {
+        localStorage.setItem(`cinebid_room_${code}`, JSON.stringify(room));
+      } catch {
+        // ignore
+      }
     }
 
     // 2. Play subtle audio chime

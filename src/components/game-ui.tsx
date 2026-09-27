@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  ArrowLeftRight,
   ArrowUpDown,
   Award,
   BookOpen,
@@ -827,40 +828,58 @@ export function AuctionTimer({
   onTimerEnd?: () => void;
   isPaused?: boolean | undefined;
 }) {
-  const [displaySec, setDisplaySec] = useState<number>(() => {
-    if (isPaused) return seconds;
-    if (endTime) return Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-    return seconds;
-  });
+  const onTimerEndRef = useRef(onTimerEnd);
+  onTimerEndRef.current = onTimerEnd;
 
   const onEndCalledRef = useRef(false);
+  const mountTimeRef = useRef(Date.now());
+
+  const getEffectiveTarget = () => {
+    const now = Date.now();
+    const safeSec = Math.max(5, typeof seconds === "number" && !isNaN(seconds) && seconds > 0 ? seconds : 30);
+    if (typeof endTime === "number" && !isNaN(endTime)) {
+      if (endTime > now) {
+        return endTime;
+      }
+    }
+    return now + safeSec * 1000;
+  };
+
+  const [displaySec, setDisplaySec] = useState<number>(() => {
+    if (isPaused) return Math.max(1, typeof seconds === "number" && !isNaN(seconds) && seconds > 0 ? seconds : 30);
+    const target = getEffectiveTarget();
+    return Math.max(0, Math.ceil((target - Date.now()) / 1000));
+  });
 
   useEffect(() => {
     onEndCalledRef.current = false;
-  }, [endTime]);
+    mountTimeRef.current = Date.now();
+  }, [endTime, seconds]);
 
   useEffect(() => {
     if (isPaused) {
-      setDisplaySec(seconds);
+      setDisplaySec(Math.max(1, typeof seconds === "number" && !isNaN(seconds) && seconds > 0 ? seconds : 30));
       return;
     }
 
-    const target = endTime || Date.now() + seconds * 1000;
+    const target = getEffectiveTarget();
 
     const tick = () => {
-      const remaining = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+      const now = Date.now();
+      const remaining = Math.max(0, Math.ceil((target - now) / 1000));
       setDisplaySec(remaining);
 
-      if (remaining === 0 && !onEndCalledRef.current) {
+      // Guard: do not trigger timer expiry within 2 seconds of timer mounting / resetting
+      if (remaining === 0 && !onEndCalledRef.current && (now - mountTimeRef.current >= 2000)) {
         onEndCalledRef.current = true;
-        onTimerEnd?.();
+        onTimerEndRef.current?.();
       }
     };
 
     tick();
-    const interval = setInterval(tick, 100);
+    const interval = setInterval(tick, 150);
     return () => clearInterval(interval);
-  }, [endTime, seconds, onTimerEnd, isPaused]);
+  }, [endTime, seconds, isPaused]);
 
   const mins = Math.floor(displaySec / 60);
   const secs = displaySec % 60;

@@ -108,17 +108,45 @@ export function saveStoredRoom(roomCode: string, roomData: any): any {
     } else if (Array.isArray(existing.players) && (!roomData.players || roomData.players.length === 0)) {
       toSave.players = existing.players;
     }
+
+    // Merge kicked players blacklist
+    if (Array.isArray(existing.kickedPlayerIds)) {
+      toSave.kickedPlayerIds = Array.from(new Set([...(toSave.kickedPlayerIds || []), ...existing.kickedPlayerIds]));
+    }
+    // Filter out any blacklisted kicked players from players array
+    if (Array.isArray(toSave.kickedPlayerIds) && Array.isArray(toSave.players)) {
+      const kickedSet = new Set(toSave.kickedPlayerIds);
+      toSave.players = toSave.players.filter((p: any) => !kickedSet.has(p.id));
+    }
+    // Preserve active trades
+    if (Array.isArray(existing.trades) && (!toSave.trades || toSave.trades.length === 0)) {
+      toSave.trades = existing.trades;
+    }
   }
 
-  // Ensure all players have valid numerical budgets
+  // Ensure all players have consistent numerical budgets derived from room's startingBudget
+  if (!toSave.settings) toSave.settings = {};
+  const isCricketRoom = toSave.auctionType === "CRICKET" || canonicalCode.startsWith("IPL");
+  const defaultBudget = Number(toSave.settings?.startingBudget) > 0 ? Number(toSave.settings.startingBudget) : (isCricketRoom ? 150 : 100);
+  toSave.settings.startingBudget = defaultBudget;
+
   if (Array.isArray(toSave.players)) {
-    const defaultBudget = typeof toSave.settings?.startingBudget === "number" ? toSave.settings.startingBudget : 100;
-    toSave.players = toSave.players.map((p: any) => ({
-      ...p,
-      budget: typeof p.budget === "number" && !isNaN(p.budget) ? Math.round(p.budget * 100) / 100 : defaultBudget,
-      initialBudget: typeof p.initialBudget === "number" && !isNaN(p.initialBudget) ? Math.round(p.initialBudget * 100) / 100 : defaultBudget,
-      movies: Array.isArray(p.movies) ? p.movies : [],
-    }));
+    toSave.players = toSave.players.map((p: any) => {
+      const movies = Array.isArray(p.movies) ? p.movies : [];
+      let budget: number;
+      if (movies.length === 0) {
+        budget = defaultBudget;
+      } else {
+        const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        budget = Math.round((defaultBudget - spent) * 100) / 100;
+      }
+      return {
+        ...p,
+        budget,
+        initialBudget: defaultBudget,
+        movies,
+      };
+    });
   }
 
   rooms.set(canonicalCode, {
@@ -131,6 +159,28 @@ export function saveStoredRoom(roomCode: string, roomData: any): any {
   return toSave;
 }
 
+export function removePlayerFromStoredRoom(roomCode: string, playerId: string): { success: boolean; room?: any; error?: string } {
+  const room = getStoredRoom(roomCode);
+  if (!room) {
+    return { success: false, error: `Room ${roomCode} not found in relay memory.` };
+  }
+  const code = (room.roomCode || roomCode).toUpperCase();
+  if (!room.kickedPlayerIds) room.kickedPlayerIds = [];
+  if (!room.kickedPlayerIds.includes(playerId)) {
+    room.kickedPlayerIds.push(playerId);
+  }
+  if (Array.isArray(room.players)) {
+    room.players = room.players.filter((p: any) => p.id !== playerId);
+  }
+  if (room.currentBidderId === playerId) {
+    room.currentBidderId = null;
+    room.currentBidderName = null;
+  }
+  room.version = (room.version || 1) + 1;
+  saveStoredRoom(code, room);
+  return { success: true, room };
+}
+
 export function addPlayerToStoredRoom(roomCode: string, player: any): { success: boolean; room?: any; error?: string; notFound?: boolean } {
   const room = getStoredRoom(roomCode);
   if (!room) {
@@ -138,29 +188,36 @@ export function addPlayerToStoredRoom(roomCode: string, player: any): { success:
   }
   const code = (room.roomCode || roomCode).toUpperCase();
 
+  // Enforce host kick blacklist
+  if (Array.isArray(room.kickedPlayerIds) && room.kickedPlayerIds.includes(player.id)) {
+    return { success: false, error: "You have been removed from this room by the host." };
+  }
+
   if (!room.players) room.players = [];
+  if (!room.settings) room.settings = {};
 
   const maxPlayers = room.settings?.maxPlayers || 8;
-  const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+  const isCricket = room.auctionType === "CRICKET" || code.startsWith("IPL");
+  const startingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+  room.settings.startingBudget = startingBudget;
   const existingIndex = room.players.findIndex((p: any) => p.id === player.id);
 
   if (existingIndex >= 0) {
     // Update existing player record
     const prev = room.players[existingIndex];
-    const prevBudget = typeof prev.budget === "number" && !isNaN(prev.budget) ? prev.budget : undefined;
-    const incomingBudget = typeof player.budget === "number" && !isNaN(player.budget) ? player.budget : undefined;
-    const finalBudget = Math.round((prevBudget ?? incomingBudget ?? startingBudget) * 100) / 100;
-
-    const prevInitial = typeof prev.initialBudget === "number" && !isNaN(prev.initialBudget) ? prev.initialBudget : undefined;
-    const incomingInitial = typeof player.initialBudget === "number" && !isNaN(player.initialBudget) ? player.initialBudget : undefined;
-    const finalInitial = Math.round((prevInitial ?? incomingInitial ?? startingBudget) * 100) / 100;
+    const movies = Array.isArray(prev.movies) ? prev.movies : (Array.isArray(player.movies) ? player.movies : []);
+    let finalBudget = startingBudget;
+    if (movies.length > 0) {
+      const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+      finalBudget = Math.round((startingBudget - spent) * 100) / 100;
+    }
 
     room.players[existingIndex] = {
       ...prev,
       ...player,
       budget: finalBudget,
-      initialBudget: finalInitial,
-      movies: prev.movies || player.movies || [],
+      initialBudget: startingBudget,
+      movies,
     };
   } else {
     if (room.players.length >= maxPlayers) {
@@ -177,15 +234,13 @@ export function addPlayerToStoredRoom(roomCode: string, player: any): { success:
       cleanName = `${cleanName} ${counter}`;
     }
 
-    const assignedBudget = typeof player.budget === "number" && !isNaN(player.budget) ? Math.round(player.budget * 100) / 100 : startingBudget;
-    const assignedInitial = typeof player.initialBudget === "number" && !isNaN(player.initialBudget) ? Math.round(player.initialBudget * 100) / 100 : startingBudget;
-
+    // New player joining the room: ALWAYS gets the room's starting budget (e.g. 150 Cr)
     const newPlayer = {
       ...player,
       name: cleanName,
-      budget: assignedBudget,
-      initialBudget: assignedInitial,
-      movies: player.movies || [],
+      budget: startingBudget,
+      initialBudget: startingBudget,
+      movies: [],
     };
     room.players.push(newPlayer);
   }
@@ -307,6 +362,17 @@ export function handleNodeRoomRequest(req: any, res: any, next: () => void): voi
   if (req.method === "POST" && roomCode && subAction === "join") {
     readBody((body) => {
       const result = addPlayerToStoredRoom(roomCode, body.player || body);
+      res.statusCode = result.success ? 200 : 400;
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(result));
+    });
+    return;
+  }
+
+  // POST /api/rooms/:code/kick
+  if (req.method === "POST" && roomCode && subAction === "kick") {
+    readBody((body) => {
+      const result = removePlayerFromStoredRoom(roomCode, body.playerId);
       res.statusCode = result.success ? 200 : 400;
       res.setHeader("Content-Type", "application/json");
       res.end(JSON.stringify(result));
@@ -447,6 +513,23 @@ export async function handleFetchRoomRequest(request: Request): Promise<Response
     }
   }
 
+  // POST /api/rooms/:code/kick
+  if (request.method === "POST" && roomCode && subAction === "kick") {
+    try {
+      const body = await request.json();
+      const result = removePlayerFromStoredRoom(roomCode, body.playerId);
+      return new Response(JSON.stringify(result), {
+        status: result.success ? 200 : 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    } catch {
+      return new Response(JSON.stringify({ success: false, error: "Invalid JSON body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
   // POST /api/rooms or /api/rooms/:code (upsert)
   if (request.method === "POST" || request.method === "PUT") {
     try {
@@ -501,5 +584,14 @@ export const joinRoomServerFn = createServerFn({ method: "POST" })
       return { success: false, error: "Invalid join payload" };
     }
     return addPlayerToStoredRoom(roomCode, player);
+  });
+
+export const kickPlayerServerFn = createServerFn({ method: "POST" })
+  .validator((payload: { roomCode: string; playerId: string }) => payload)
+  .handler(async ({ data: { roomCode, playerId } }) => {
+    if (!roomCode || !playerId) {
+      return { success: false, error: "Invalid kick payload" };
+    }
+    return removePlayerFromStoredRoom(roomCode, playerId);
   });
 

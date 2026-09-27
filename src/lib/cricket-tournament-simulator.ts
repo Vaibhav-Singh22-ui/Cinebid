@@ -160,18 +160,18 @@ export function initializeIplTournament(
       color: "#FF5722",
       isHost: false,
       playing11: [
-        { id: "ai-p1", title: "Virat Kohli", role: "Batsman", rating: 94, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p2", title: "Rohit Sharma", role: "Batsman", rating: 92, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p3", title: "Suryakumar Yadav", role: "Batsman", rating: 91, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p4", title: "Heinrich Klaasen", role: "Wicketkeeper", rating: 90, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p5", title: "Hardik Pandya", role: "All-Rounder", rating: 89, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p6", title: "Andre Russell", role: "All-Rounder", rating: 90, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p7", title: "Rashid Khan", role: "Bowler", rating: 95, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p8", title: "Jasprit Bumrah", role: "Bowler", rating: 96, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p9", title: "Trent Boult", role: "Bowler", rating: 88, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p10", title: "Yuzvendra Chahal", role: "Bowler", rating: 87, basePrice: 2, currentBid: 2, status: "sold" },
-        { id: "ai-p11", title: "Arshdeep Singh", role: "Bowler", rating: 86, basePrice: 2, currentBid: 2, status: "sold" },
-      ],
+        { id: "ai-p1", title: "Virat Kohli", role: "BATTER", imdbRating: 94, basePrice: 2, purchasePrice: 2, genre: "Top-Order", genres: ["Batter"], boxOffice: 8000, director: "India", year: 35 },
+        { id: "ai-p2", title: "Rohit Sharma", role: "BATTER", imdbRating: 92, basePrice: 2, purchasePrice: 2, genre: "Top-Order", genres: ["Batter"], boxOffice: 7500, director: "India", year: 37 },
+        { id: "ai-p3", title: "Suryakumar Yadav", role: "BATTER", imdbRating: 91, basePrice: 2, purchasePrice: 2, genre: "Middle-Order", genres: ["Batter"], boxOffice: 5000, director: "India", year: 34 },
+        { id: "ai-p4", title: "Heinrich Klaasen", role: "WICKETKEEPER", imdbRating: 90, basePrice: 2, purchasePrice: 2, genre: "Wicketkeeper", genres: ["WK"], boxOffice: 4000, director: "South Africa", year: 33 },
+        { id: "ai-p5", title: "Hardik Pandya", role: "ALL_ROUNDER", imdbRating: 89, basePrice: 2, purchasePrice: 2, genre: "All-Rounder", genres: ["AR"], boxOffice: 4500, director: "India", year: 31 },
+        { id: "ai-p6", title: "Andre Russell", role: "ALL_ROUNDER", imdbRating: 90, basePrice: 2, purchasePrice: 2, genre: "All-Rounder", genres: ["AR"], boxOffice: 4800, director: "West Indies", year: 36 },
+        { id: "ai-p7", title: "Rashid Khan", role: "SPIN_BOWLER", imdbRating: 95, basePrice: 2, purchasePrice: 2, genre: "Spin Bowler", genres: ["Bowler"], boxOffice: 4200, director: "Afghanistan", year: 26 },
+        { id: "ai-p8", title: "Jasprit Bumrah", role: "FAST_BOWLER", imdbRating: 96, basePrice: 2, purchasePrice: 2, genre: "Fast Bowler", genres: ["Bowler"], boxOffice: 5100, director: "India", year: 31 },
+        { id: "ai-p9", title: "Trent Boult", role: "FAST_BOWLER", imdbRating: 88, basePrice: 2, purchasePrice: 2, genre: "Fast Bowler", genres: ["Bowler"], boxOffice: 4000, director: "New Zealand", year: 35 },
+        { id: "ai-p10", title: "Yuzvendra Chahal", role: "SPIN_BOWLER", imdbRating: 87, basePrice: 2, purchasePrice: 2, genre: "Spin Bowler", genres: ["Bowler"], boxOffice: 3900, director: "India", year: 34 },
+        { id: "ai-p11", title: "Arshdeep Singh", role: "FAST_BOWLER", imdbRating: 86, basePrice: 2, purchasePrice: 2, genre: "Fast Bowler", genres: ["Bowler"], boxOffice: 3500, director: "India", year: 25 },
+      ] as unknown as OwnedMovie[],
     };
     teams.push(aiRival);
   }
@@ -662,33 +662,36 @@ Generate realistic scorecards and final over thriller drama. Return strictly val
 
   // TIER 1: GROQ
   if (GROQ_API_KEY) {
-    try {
-      const resp = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${GROQ_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0.8,
-        }),
-      }, 2500);
-      if (resp.ok) {
-        const data = await resp.json();
-        const content = data.choices?.[0]?.message?.content;
-        if (content) {
-          const parsed = JSON.parse(content);
-          return sanitizeSimulatedResult(parsed, team1, team2);
+    const groqModels = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"];
+    for (const model of groqModels) {
+      try {
+        const resp = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${GROQ_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            response_format: { type: "json_object" },
+            temperature: 0.8,
+          }),
+        }, 3000);
+        if (resp.ok) {
+          const data = await resp.json();
+          const content = data.choices?.[0]?.message?.content;
+          if (content) {
+            const parsed = JSON.parse(content);
+            return sanitizeSimulatedResult(parsed, team1, team2);
+          }
         }
+      } catch {
+        // try next model
       }
-    } catch {
-      // try next tier
     }
   }
 

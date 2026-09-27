@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
@@ -36,6 +36,8 @@ import {
   XCircle,
   Zap,
   Share2,
+  ArrowLeftRight,
+  UserX,
 } from "lucide-react";
 import {
   Dialog,
@@ -44,6 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { RoomChat } from "@/components/room-chat";
+import { TradeHubModal } from "@/components/trade-hub";
 import {
   AuctionTimer,
   AuctionTopTabs,
@@ -58,6 +61,7 @@ import {
   SiteHeader,
 } from "@/components/game-ui";
 import {
+  DEFAULT_ROOM_SETTINGS,
   formatCr,
   getOptimalMovieSlate,
   getRandomizedMovieSlate,
@@ -89,6 +93,7 @@ import {
   getRoom,
   joinRoom,
   joinRoomAsync,
+  kickPlayerFromRoom,
   placeBid,
   playerPassOrOut,
   resolveCurrentAuction,
@@ -134,6 +139,63 @@ function Page({ children }: { children: React.ReactNode }) {
 
 function StarDot() {
   return <span className="w-2 h-2 rounded-full bg-gold inline-block animate-pulse" />;
+}
+
+function KickPlayerConfirmDialog({
+  candidate,
+  isOpen,
+  isProcessing,
+  onClose,
+  onConfirm,
+}: {
+  candidate: Player | null;
+  isOpen: boolean;
+  isProcessing: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!isOpen || !candidate) return null;
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="bg-panel border-red-500/50 text-foreground max-w-md p-6 rounded-2xl shadow-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl font-display font-black text-red-400 flex items-center gap-2">
+            <UserX size={22} className="text-red-400" />
+            Kick {candidate.name}?
+          </DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-2 text-xs sm:text-sm text-cream/90">
+          <p>
+            Are you sure you want to remove <strong className="text-white">{candidate.name}</strong> from this auction arena?
+          </p>
+          <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex flex-col gap-1">
+            <span>• Their browser will be immediately disconnected.</span>
+            <span>• They will be blacklisted from rejoining this room.</span>
+            <span>• Any active bids or pending trades will be automatically cancelled.</span>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2.5 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isProcessing}
+            className="px-4 py-2 rounded-xl border border-border text-xs font-bold text-cream hover:bg-black/40 cursor-pointer disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={isProcessing}
+            className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black uppercase tracking-wider shadow-lg shadow-red-600/30 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {isProcessing ? <LoaderCircle size={14} className="animate-spin" /> : <UserX size={14} />}
+            <span>Confirm Kick</span>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // -------------------------------------------------------------
@@ -391,7 +453,7 @@ export function GameForm({
   initialGame,
 }: {
   mode: "create" | "join";
-  initialGame?: string;
+  initialGame?: string | undefined;
 }) {
   const navigate = useNavigate();
   const [auctionType, setAuctionType] = useState<AuctionType>(() => {
@@ -408,7 +470,14 @@ export function GameForm({
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [max, setMax] = useState("4");
-  const [budget, setBudget] = useState("100");
+  const [budget, setBudget] = useState(() => {
+    if (initialGame?.toUpperCase() === "CRICKET") return "150";
+    if (typeof window !== "undefined") {
+      const g = new URLSearchParams(window.location.search).get("game");
+      if (g?.toUpperCase() === "CRICKET") return "150";
+    }
+    return "100";
+  });
   const [seconds, setSeconds] = useState("30");
   const [category, setCategory] = useState("ALL");
   const [selectedColor, setSelectedColor] = useState("#f5c518");
@@ -516,6 +585,7 @@ export function GameForm({
                   onClick={() => {
                     setAuctionType("CINEMA");
                     setCategory("ALL");
+                    if (budget === "150") setBudget("100");
                   }}
                   className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
                     auctionType === "CINEMA"
@@ -530,6 +600,7 @@ export function GameForm({
                   onClick={() => {
                     setAuctionType("CRICKET");
                     setCategory("ALL");
+                    if (budget === "100") setBudget("150");
                   }}
                   className={`px-5 py-2.5 rounded-xl text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
                     auctionType === "CRICKET"
@@ -663,7 +734,7 @@ export function GameForm({
                         <option value="75">₹75 Cr</option>
                         <option value="100">₹100 Cr (Official Standard)</option>
                         <option value="125">₹125 Cr</option>
-                        <option value="150">₹150 Cr</option>
+                        <option value="150">₹150 Cr (Official IPL Mega Auction Purse)</option>
                         <option value="200">₹200 Cr</option>
                       </select>
                     </div>
@@ -778,30 +849,66 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
   const [rosterSortBy, setRosterSortBy] = useState<"DEFAULT" | "PRICE_DESC" | "PRICE_ASC" | "NAME_ASC" | "NAME_DESC" | "RATING_DESC">("DEFAULT");
   const currentUser = getCurrentUser();
 
+  const sanitizeRoom = useCallback((r: RoomState | null): RoomState | null => {
+    if (!r) return null;
+    const isCricket = r.auctionType === "CRICKET" || (r.roomCode || code).startsWith("IPL");
+    const b = Number(r.settings?.startingBudget) > 0 ? Number(r.settings.startingBudget) : (isCricket ? 150 : 100);
+    if (!r.settings) r.settings = { ...DEFAULT_ROOM_SETTINGS };
+    r.settings.startingBudget = b;
+    if (Array.isArray(r.players)) {
+      r.players.forEach((p) => {
+        p.initialBudget = b;
+        const spent = (p.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+        p.budget = Math.round((b - spent) * 100) / 100;
+      });
+    }
+    return r;
+  }, [code]);
+
   useEffect(() => {
     let isMounted = true;
     void fetchRemoteRoom(code).then((remote) => {
       if (!isMounted) return;
       if (remote) {
+        if (remote.kickedPlayerIds?.includes(currentUser.id)) {
+          alert("You have been removed from this room by the host.");
+          navigate({ to: "/" });
+          return;
+        }
         const isUserIn = remote.players.some((p) => p.id === currentUser.id);
         if (!isUserIn && remote.players.length < (remote.settings?.maxPlayers || 8)) {
           void joinRoomAsync(remote.roomCode, currentUser.name).then((joined) => {
-            if (isMounted) setRoom(joined);
-          }).catch(() => {
-            if (isMounted) setRoom(remote);
+            if (isMounted) setRoom(sanitizeRoom(joined));
+          }).catch((err) => {
+            if (err?.message?.includes("removed") || remote.kickedPlayerIds?.includes(currentUser.id)) {
+              alert("You have been removed from this room by the host.");
+              navigate({ to: "/" });
+              return;
+            }
+            if (isMounted) setRoom(sanitizeRoom(remote));
           });
         } else {
-          setRoom(remote);
+          setRoom(sanitizeRoom(remote));
         }
       } else {
         const local = getRoom(code);
-        setRoom(local);
+        if (local?.kickedPlayerIds?.includes(currentUser.id)) {
+          alert("You have been removed from this room by the host.");
+          navigate({ to: "/" });
+          return;
+        }
+        setRoom(sanitizeRoom(local));
       }
       setLoading(false);
     });
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
-      setRoom(fresh);
+      if (fresh.kickedPlayerIds?.includes(currentUser.id)) {
+        alert("You have been removed from this room by the host.");
+        navigate({ to: "/" });
+        return;
+      }
+      setRoom(sanitizeRoom(fresh));
       setLoading(false);
       if (fresh.status === "AUCTION") {
         navigate({ to: "/game/$roomCode", params: { roomCode: fresh.roomCode || code } });
@@ -809,9 +916,27 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     });
 
     return () => unsubscribe();
-  }, [code, navigate, currentUser.id, currentUser.name]);
+  }, [code, navigate, currentUser.id, currentUser.name, sanitizeRoom]);
 
   const isHost = room?.hostId === currentUser.id;
+  const [kickCandidate, setKickCandidate] = useState<Player | null>(null);
+  const [kickingInProgress, setKickingInProgress] = useState(false);
+
+  const handleConfirmKick = async () => {
+    if (!kickCandidate || !room) return;
+    setKickingInProgress(true);
+    try {
+      const updated = await kickPlayerFromRoom(room.roomCode || code, kickCandidate.id);
+      if (updated) {
+        setRoom(sanitizeRoom(updated));
+      }
+    } catch (err) {
+      console.error("Kick error:", err);
+    } finally {
+      setKickingInProgress(false);
+      setKickCandidate(null);
+    }
+  };
 
   const copyCode = () => {
     const targetCode = room?.roomCode || code;
@@ -853,12 +978,14 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
     room.currentBid = first ? first.basePrice : 1;
     room.currentBidderId = null;
     room.currentBidderName = null;
-    room.secondsRemaining = room.settings.auctionSeconds;
-    room.auctionEndTime = Date.now() + room.settings.auctionSeconds * 1000;
+    const auctionSeconds = Number(room.settings?.auctionSeconds) || 30;
+    room.secondsRemaining = auctionSeconds;
+    room.auctionEndTime = Date.now() + auctionSeconds * 1000;
+    room.roundStartedAt = Date.now();
     room.isSold = false;
     room.outPlayerIds = [];
     bumpRoomVersion(room);
-    saveRoom(room);
+    saveRoom(room, false, true, false, false);
     navigate({ to: "/game/$roomCode", params: { roomCode: code } });
   };
 
@@ -899,7 +1026,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
             </button>
             <button
               type="button"
-              onClick={() => navigate({ to: "/join" })}
+              onClick={() => navigate({ to: "/join", search: { game: undefined } })}
               className="btn btn-primary px-5 py-3 rounded-2xl bg-gold text-black text-xs font-black uppercase cursor-pointer"
             >
               Try Another Code
@@ -1216,7 +1343,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
               {room.players.map((p) => (
                 <div
                   key={p.id}
-                  className="p-3 rounded-2xl bg-black/40 border border-border/60 flex items-center justify-between gap-3"
+                  className="p-3 rounded-2xl bg-black/40 border border-border/60 flex items-center justify-between gap-3 relative group"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span
@@ -1234,6 +1361,26 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
                       </span>
                     </div>
                   </div>
+
+                  <div className="flex items-center gap-2.5 flex-shrink-0">
+                    <div className="text-right">
+                      <span className="text-[9px] uppercase tracking-wider text-muted-foreground block font-bold">Purse</span>
+                      <strong className="text-xs sm:text-sm font-mono font-black text-gold">
+                        {formatCr(typeof p.budget === "number" && !isNaN(p.budget) ? p.budget : (Number(room.settings.startingBudget) || (isCricket ? 150 : 100)))}
+                      </strong>
+                    </div>
+
+                    {isHost && p.id !== currentUser.id && (
+                      <button
+                        type="button"
+                        onClick={() => setKickCandidate(p)}
+                        className="p-1.5 rounded-xl border border-red-500/40 bg-red-950/40 hover:bg-red-500/30 text-red-400 hover:text-red-200 transition-colors cursor-pointer"
+                        title={`Kick ${p.name} from room`}
+                      >
+                        <UserX size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
 
@@ -1246,7 +1393,7 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
             <div className="grid grid-cols-3 gap-2 mt-2 pt-4 border-t border-border/60 text-center">
               <div className="p-2 rounded-xl bg-black/30 border border-border/50">
                 <span className="text-[10px] text-muted-foreground uppercase font-bold">Purse</span>
-                <strong className="block text-xs font-black text-gold mt-0.5">{formatCr(room.settings.startingBudget)}</strong>
+                <strong className="block text-xs font-black text-gold mt-0.5">{formatCr(Number(room.settings.startingBudget) || (isCricket ? 150 : 100))}</strong>
               </div>
               <div className="p-2 rounded-xl bg-black/30 border border-border/50">
                 <span className="text-[10px] text-muted-foreground uppercase font-bold">Timer</span>
@@ -1308,6 +1455,14 @@ export function LobbyScreen({ roomCode }: { roomCode: string }) {
           </div>
         </section>
       </main>
+
+      <KickPlayerConfirmDialog
+        candidate={kickCandidate}
+        isOpen={kickCandidate !== null}
+        isProcessing={kickingInProgress}
+        onClose={() => setKickCandidate(null)}
+        onConfirm={handleConfirmKick}
+      />
     </Page>
   );
 }
@@ -1325,6 +1480,25 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const prevBidderIdRef = useRef<string | null>(room?.currentBidderId ?? null);
   const lastSoldSoundRoundRef = useRef<number | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
+  const isHost = Boolean(room && room.hostId === currentUser.id);
+  const [kickCandidate, setKickCandidate] = useState<Player | null>(null);
+  const [kickingInProgress, setKickingInProgress] = useState(false);
+
+  const handleConfirmKick = async () => {
+    if (!kickCandidate || !room) return;
+    setKickingInProgress(true);
+    try {
+      const updated = await kickPlayerFromRoom(room.roomCode || code, kickCandidate.id);
+      if (updated) {
+        setRoom({ ...updated });
+      }
+    } catch (err) {
+      console.error("Kick error:", err);
+    } finally {
+      setKickingInProgress(false);
+      setKickCandidate(null);
+    }
+  };
 
   const showBidToast = (text: string) => {
     if (toastTimeoutRef.current) window.clearTimeout(toastTimeoutRef.current);
@@ -1341,6 +1515,11 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     void fetchRemoteRoom(code).then((remote) => {
       if (!isMounted) return;
       if (remote) {
+        if (remote.kickedPlayerIds?.includes(currentUser.id)) {
+          alert("You have been removed from this room by the host.");
+          navigate({ to: "/" });
+          return;
+        }
         const isUserIn = remote.players.some((p) => p.id === currentUser.id);
         if (!isUserIn && remote.players.length < (remote.settings?.maxPlayers || 8)) {
           void joinRoomAsync(code, currentUser.name).then((joined) => {
@@ -1366,6 +1545,11 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
 
     const activeRoom = getRoom(code);
     if (activeRoom) {
+      if (activeRoom.kickedPlayerIds?.includes(currentUser.id)) {
+        alert("You have been removed from this room by the host.");
+        navigate({ to: "/" });
+        return;
+      }
       const isRoomHost = activeRoom.hostId === currentUser.id;
       // ONLY the host initializes the auction timer / status
       if (isRoomHost) {
@@ -1395,6 +1579,11 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     }
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
+      if (fresh.kickedPlayerIds?.includes(currentUser.id)) {
+        alert("You have been removed from this room by the host.");
+        navigate({ to: "/" });
+        return;
+      }
       // 1. Play celebration or horn when an item is concluded (once per round on all clients)
       if (fresh.isSold && lastSoldSoundRoundRef.current !== fresh.currentMovieIndex) {
         lastSoldSoundRoundRef.current = fresh.currentMovieIndex;
@@ -1453,11 +1642,18 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
     }
   };
 
-  const handleTimerExpired = () => {
+  const handleTimerExpired = useCallback(() => {
     // Only the host resolves the auction! Non-hosts wait for authoritative resolution.
     if (!isHost) return;
     const latest = getRoom(code);
     if (!latest || latest.isSold || latest.status !== "AUCTION" || latest.isPaused) return;
+
+    // Safety check: round must have been active for at least 5 seconds before expiring unsold with NO bids
+    if (!latest.currentBidderId && latest.roundStartedAt && (Date.now() - latest.roundStartedAt < 5000)) {
+      console.warn("[Auction] Guarded against premature unsold expiration (< 5s)");
+      return;
+    }
+
     const resolved = resolveCurrentAuction(latest.roomCode);
     if (resolved) {
       if (lastSoldSoundRoundRef.current !== resolved.currentMovieIndex) {
@@ -1470,7 +1666,7 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
       }
       setRoom({ ...resolved });
     }
-  };
+  }, [code, isHost]);
 
   if (!room || !room.moviePool || room.moviePool.length === 0) {
     return (
@@ -1491,16 +1687,24 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const currentItem = room.moviePool[room.currentMovieIndex] || room.moviePool[0];
   if (!currentItem) return null;
 
-  const defaultStartingBudget = room.settings?.startingBudget || 100;
+  const isCricket =
+    room.auctionType === "CRICKET" ||
+    code.startsWith("IPL") ||
+    currentItem.auctionType === "CRICKET" ||
+    Boolean(currentItem.role);
+  const defaultStartingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+  if (!room.settings) room.settings = { ...DEFAULT_ROOM_SETTINGS };
+  room.settings.startingBudget = defaultStartingBudget;
 
   // Sanitize all players in room to eliminate undefined, null, NaN or unrounded float budgets
   for (const p of room.players) {
-    if (typeof p.budget !== "number" || isNaN(p.budget)) {
+    p.movies = Array.isArray(p.movies) ? p.movies : [];
+    p.initialBudget = defaultStartingBudget;
+    if (p.movies.length === 0) {
       p.budget = defaultStartingBudget;
-    }
-    p.budget = Math.round(p.budget * 100) / 100;
-    if (typeof p.initialBudget !== "number" || isNaN(p.initialBudget)) {
-      p.initialBudget = defaultStartingBudget;
+    } else {
+      const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+      p.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
     }
   }
 
@@ -1522,25 +1726,19 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
       ready: true,
     };
   } else {
-    if (typeof me.budget !== "number" || isNaN(me.budget)) {
+    me.initialBudget = defaultStartingBudget;
+    if ((me.movies?.length || 0) === 0) {
       me.budget = defaultStartingBudget;
-    }
-    me.budget = Math.round(me.budget * 100) / 100;
-    if (typeof me.initialBudget !== "number" || isNaN(me.initialBudget)) {
-      me.initialBudget = defaultStartingBudget;
+    } else {
+      const spent = (me.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+      me.budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
     }
   }
 
-  const isHost = room.hostId === currentUser.id;
   const isWinning = room.currentBidderId === me.id;
   const isMeOut = room.outPlayerIds?.includes(me.id);
   const currentLeaderName = room.currentBidderName || "None yet";
   const totalRounds = Math.min(room.settings.totalMovies, room.moviePool.length);
-  const isCricket =
-    room.auctionType === "CRICKET" ||
-    code.startsWith("IPL") ||
-    currentItem.auctionType === "CRICKET" ||
-    Boolean(currentItem.role);
 
   // IPL Rule checks
   const isOverseasItem = isCricket && isOverseasPlayer(currentItem);
@@ -1549,15 +1747,15 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
   const isSquadFull = isCricket && myMovies.length >= 18;
   const isOverseasFull = isOverseasItem && myOverseasCount >= 7;
 
-  const handleUserBid = (increment: number) => {
+  const handleUserBid = (amountOrIncrement: number, isAbsolute = false) => {
     if (room.isSold || room.isPaused || isMeOut || isSquadFull || isOverseasFull) return;
-    const targetBid = room.currentBid + increment;
-    if (targetBid >= 10 || increment >= 2) {
+    const targetBid = isAbsolute ? amountOrIncrement : room.currentBid + amountOrIncrement;
+    if (targetBid >= 10 || (isAbsolute ? targetBid - room.currentBid >= 2 : amountOrIncrement >= 2)) {
       playChaChingSound();
     } else {
       playBidSound();
     }
-    const result = placeBid(room.roomCode, me.id, increment);
+    const result = placeBid(room.roomCode, me.id, amountOrIncrement, isAbsolute);
     if (result.success && result.room) {
       prevBidRef.current = result.room.currentBid;
       showBidToast(`You placed a bid of ${formatCr(result.room.currentBid)}!`);
@@ -2084,13 +2282,17 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                           onClick={() => {
                             if (isCricket) {
                               if (isOpeningBid) {
-                                handleUserBid(currentItem.basePrice);
+                                handleUserBid(currentItem.basePrice, true);
                               } else if (iplSlabInfo) {
                                 const inc = Math.round((iplSlabInfo.nextBid - room.currentBid) * 100) / 100;
                                 handleUserBid(inc);
                               }
                             } else {
-                              handleUserBid(1);
+                              if (isOpeningBid) {
+                                handleUserBid(currentItem.basePrice, true);
+                              } else {
+                                handleUserBid(1);
+                              }
                             }
                           }}
                           disabled={disabled}
@@ -2600,6 +2802,19 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
                       <strong className="text-xs font-black text-gold font-mono">
                         {formatCr(p.budget)}
                       </strong>
+                      {isHost && !isMe && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setKickCandidate(p);
+                          }}
+                          className="p-1 rounded-md border border-red-500/40 bg-red-950/40 hover:bg-red-500/30 text-red-400 hover:text-red-200 transition-colors ml-1 cursor-pointer flex-shrink-0"
+                          title={`Kick ${p.name} from room`}
+                        >
+                          <UserX size={11} />
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -2959,6 +3174,14 @@ export function AuctionScreen({ roomCode }: { roomCode: string }) {
           </div>
         </DialogContent>
       </Dialog>
+
+      <KickPlayerConfirmDialog
+        candidate={kickCandidate}
+        isOpen={kickCandidate !== null}
+        isProcessing={kickingInProgress}
+        onClose={() => setKickCandidate(null)}
+        onConfirm={handleConfirmKick}
+      />
     </Page>
   );
 }
@@ -3055,6 +3278,8 @@ export function IplTournamentHub({
         setTournament(curr);
         saveTournamentState(room.roomCode, curr);
         if (curr.isCompleted) break;
+        // Pacing delay (120ms) to allow UI updates and token bucket replenishment
+        await new Promise((resolve) => setTimeout(resolve, 120));
       }
 
       playSoldCelebrationSound();
@@ -3763,11 +3988,51 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
   };
 
   const [step, setStep] = useState<"select" | "waiting" | "evaluating" | "final">(getInitialStep);
+  const [isTradeHubOpen, setIsTradeHubOpen] = useState(false);
+  const [kickCandidate, setKickCandidate] = useState<Player | null>(null);
+  const [kickingInProgress, setKickingInProgress] = useState(false);
+
+  // Close trade window immediately if we advance to evaluation or final results
+  useEffect(() => {
+    if (step === "evaluating" || step === "final") {
+      setIsTradeHubOpen(false);
+    }
+  }, [step]);
+
+  const handleConfirmKick = async () => {
+    if (!kickCandidate || !room) return;
+    setKickingInProgress(true);
+    try {
+      const updated = await kickPlayerFromRoom(room.roomCode || code, kickCandidate.id);
+      if (updated) {
+        setRoom({ ...updated });
+      }
+    } catch (err) {
+      console.error("Kick error:", err);
+    } finally {
+      setKickingInProgress(false);
+      setKickCandidate(null);
+    }
+  };
+
+  const handleRoomUpdatedFromTrade = (updated: RoomState) => {
+    setRoom({ ...updated });
+    const myFreshPlayer = updated.players.find((p) => p.id === currentUser.id);
+    const myFreshMovieIds = new Set((myFreshPlayer?.movies || []).map((m) => m.id));
+    setSelected((prev) => prev.filter((id) => myFreshMovieIds.has(id)));
+    if (captainId && !myFreshMovieIds.has(captainId)) setCaptainId(undefined);
+    if (viceCaptainId && !myFreshMovieIds.has(viceCaptainId)) setViceCaptainId(undefined);
+  };
 
   // Synchronize state with real-time multiplayer updates
   useEffect(() => {
     void fetchRemoteRoom(code).then((remote) => {
       if (remote) {
+        if (remote.kickedPlayerIds?.includes(currentUser.id)) {
+          alert("You have been removed from this room by the host.");
+          navigate({ to: "/" });
+          return;
+        }
         setRoom(remote);
         if (remote.portfolioRankings && remote.portfolioRankings.length > 0) {
           setRankings(remote.portfolioRankings);
@@ -3782,6 +4047,11 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
 
     const activeRoom = getRoom(code);
     if (activeRoom) {
+      if (activeRoom.kickedPlayerIds?.includes(currentUser.id)) {
+        alert("You have been removed from this room by the host.");
+        navigate({ to: "/" });
+        return;
+      }
       setRoom(activeRoom);
       if (activeRoom.portfolioRankings && activeRoom.portfolioRankings.length > 0) {
         setRankings(activeRoom.portfolioRankings);
@@ -3794,6 +4064,11 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
     }
 
     const unsubscribe = subscribeToMultiplayerRoom(code, (fresh) => {
+      if (fresh.kickedPlayerIds?.includes(currentUser.id)) {
+        alert("You have been removed from this room by the host.");
+        navigate({ to: "/" });
+        return;
+      }
       setRoom(fresh);
       if (fresh.portfolioRankings && fresh.portfolioRankings.length > 0) {
         setRankings(fresh.portfolioRankings);
@@ -3806,7 +4081,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
     });
 
     return () => unsubscribe();
-  }, [code, currentUser.id]);
+  }, [code, currentUser.id, navigate]);
 
   // Execute Grand Jury evaluation when all players have submitted
   const isEvaluatingRef = useRef(false);
@@ -3867,6 +4142,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
 
   const totalRequired = Math.max(1, activeHumanPlayers.length);
   const progressPercent = Math.min(100, Math.round((submittedHumanCount / totalRequired) * 100));
+  const pendingIncomingTradesCount = (room?.trades || []).filter((t) => t.toPlayerId === currentUser.id && t.status === "PENDING").length;
 
   const lockedSelectedItems = useMemo(() => {
     const ids = room?.submittedSlates?.[currentUser.id]?.movieIds || selected;
@@ -3953,6 +4229,44 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                 ? "Select your 11 match-winners from your squad. Max 4 overseas players. The Grand Jury simulation will begin once every franchise submits!"
                 : "Select your top 5 films from your acquired titles. Grand Jury evaluation will start only after every player submits their slate!"}
             </p>
+
+            {/* Post-Auction Franchise Trade Window Banner */}
+            <div className="w-full max-w-2xl my-3 p-4 rounded-2xl bg-gradient-to-r from-indigo-950/80 via-panel to-purple-950/70 border border-indigo-500/50 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4 text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 flex-shrink-0">
+                  <ArrowLeftRight size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs sm:text-sm font-black text-cream uppercase tracking-wide font-display">
+                      Franchise Player Trading Window
+                    </h3>
+                    {pendingIncomingTradesCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-gold text-black text-[10px] font-black uppercase animate-bounce">
+                        {pendingIncomingTradesCount} New Offer{pendingIncomingTradesCount > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Swap players with rival franchises, balance your lineup, or transfer cash sweeteners!
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsTradeHubOpen(true)}
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/30 flex items-center gap-2 cursor-pointer flex-shrink-0 border border-indigo-400/40 transition-all hover:scale-105"
+              >
+                <ArrowLeftRight size={13} />
+                <span>Trade Hub</span>
+                {pendingIncomingTradesCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-white text-indigo-900 font-mono font-black text-[9px]">
+                    {pendingIncomingTradesCount}
+                  </span>
+                )}
+              </button>
+            </div>
 
             {/* Incomplete Movie Slate Warning */}
             {!isCricket && userWonItems.length < 5 && userWonItems.length > 0 && (
@@ -4163,7 +4477,7 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                         </div>
                       </div>
 
-                      <div className="flex-shrink-0">
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         {isSubmitted ? (
                           <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-950/80 text-emerald-400 border border-emerald-500/50 flex items-center gap-1 shadow-sm">
                             <CheckCircle2 size={12} /> Ready
@@ -4180,6 +4494,17 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
                           <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-950/70 text-amber-300 border border-amber-500/40 flex items-center gap-1 animate-pulse">
                             <Clock size={12} /> Selecting...
                           </span>
+                        )}
+
+                        {isHost && !isCurrent && (
+                          <button
+                            type="button"
+                            onClick={() => setKickCandidate(player)}
+                            className="p-1.5 rounded-lg border border-red-500/40 bg-red-950/40 hover:bg-red-500/30 text-red-400 hover:text-red-200 transition-colors cursor-pointer"
+                            title={`Kick ${player.name} from room`}
+                          >
+                            <UserX size={12} />
+                          </button>
                         )}
                       </div>
                     </div>
@@ -4322,6 +4647,24 @@ export function ResultsScreen({ roomCode }: { roomCode: string }) {
           )
         )}
       </main>
+
+      <KickPlayerConfirmDialog
+        candidate={kickCandidate}
+        isOpen={kickCandidate !== null}
+        isProcessing={kickingInProgress}
+        onClose={() => setKickCandidate(null)}
+        onConfirm={handleConfirmKick}
+      />
+
+      {room && (step === "select" || step === "waiting") && (
+        <TradeHubModal
+          room={room}
+          currentUser={currentUser}
+          isOpen={isTradeHubOpen}
+          onClose={() => setIsTradeHubOpen(false)}
+          onRoomUpdated={handleRoomUpdatedFromTrade}
+        />
+      )}
     </Page>
   );
 }

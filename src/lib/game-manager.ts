@@ -19,9 +19,10 @@ import {
   fetchRoomServerFn,
   saveRoomServerFn,
   joinRoomServerFn,
+  kickPlayerServerFn,
 } from "./room-server-relay";
 
-export { fetchRoomServerFn, saveRoomServerFn, joinRoomServerFn };
+export { fetchRoomServerFn, saveRoomServerFn, joinRoomServerFn, kickPlayerServerFn };
 
 export interface ChatMsg {
   id: string;
@@ -62,6 +63,21 @@ export interface PlayerScore {
   viceCaptainId?: string;
 }
 
+export interface TradeOffer {
+  id: string;
+  fromPlayerId: string;
+  fromPlayerName: string;
+  toPlayerId: string;
+  toPlayerName: string;
+  offeredMovieIds: string[];
+  offeredMovieTitles: string[];
+  requestedMovieIds: string[];
+  requestedMovieTitles: string[];
+  cashAdjustment?: number; // in Cr. Positive: fromPlayer gives cash to toPlayer. Negative: toPlayer gives cash to fromPlayer.
+  status: "PENDING" | "ACCEPTED" | "REJECTED" | "CANCELLED";
+  createdAt: number;
+}
+
 export interface RoomState {
   roomCode: string;
   createdAt: number;
@@ -77,6 +93,7 @@ export interface RoomState {
   currentBidderName: string | null;
   secondsRemaining: number;
   auctionEndTime?: number | undefined;
+  roundStartedAt?: number | undefined;
   isSold: boolean;
   bidHistory: BidRecord[];
   chatMessages: ChatMsg[];
@@ -86,6 +103,8 @@ export interface RoomState {
   submittedSlates?: Record<string, SubmittedSlate> | undefined;
   isPaused?: boolean | undefined;
   tournamentData?: any | undefined;
+  kickedPlayerIds?: string[] | undefined;
+  trades?: TradeOffer[] | undefined;
   version?: number | undefined; // Monotonic sequence clock to eliminate out-of-order state jitter
 }
 
@@ -104,9 +123,28 @@ export function isPacketNewer(current: RoomState | null, incoming: RoomState): b
   if (!incoming) return false;
   if (!current) return true;
 
-  // Rule 0: Roster expansion (new player joined room)
+  // Rule 0: Status progression (e.g. LOBBY -> AUCTION -> TOP_FIVE -> EVALUATING -> RESULTS)
+  if (incoming.status !== current.status) {
+    const statusOrder: Record<string, number> = {
+      LOBBY: 1,
+      AUCTION: 2,
+      TOP_FIVE: 3,
+      EVALUATING: 4,
+      RESULTS: 5,
+    };
+    if ((statusOrder[incoming.status] || 0) >= (statusOrder[current.status] || 0)) {
+      return true;
+    }
+  }
+
+  // Rule 0.5: Roster expansion (new player joined room) or player ready state changed
   if ((incoming.players?.length || 0) > (current.players?.length || 0)) {
     return true;
+  }
+  if (incoming.status === "LOBBY") {
+    const incReady = incoming.players?.filter((p) => p.ready).length || 0;
+    const curReady = current.players?.filter((p) => p.ready).length || 0;
+    if (incReady !== curReady) return true;
   }
 
   // Rule 1: Round index progression
@@ -130,7 +168,14 @@ export function isPacketNewer(current: RoomState | null, incoming: RoomState): b
   // Rule 3: Tie-breaker on same version
   if (incoming.isSold && !current.isSold) return true;
   if (incoming.currentBid > current.currentBid) return true;
+  if (Boolean(incoming.isPaused) !== Boolean(current.isPaused)) return true;
+  if ((incoming.auctionEndTime || 0) > (current.auctionEndTime || 0)) return true;
   if ((incoming.outPlayerIds?.length || 0) > (current.outPlayerIds?.length || 0)) return true;
+  if ((incoming.kickedPlayerIds?.length || 0) > (current.kickedPlayerIds?.length || 0)) return true;
+  if ((incoming.trades?.length || 0) !== (current.trades?.length || 0)) return true;
+  if (Object.keys(incoming.submittedSlates || {}).length > Object.keys(current.submittedSlates || {}).length) return true;
+  if ((incoming.portfolioRankings?.length || 0) > (current.portfolioRankings?.length || 0)) return true;
+  if (incoming.tournamentData && !current.tournamentData) return true;
 
   return false;
 }
@@ -348,9 +393,12 @@ export function createRoom(
 ): RoomState {
   const auctionType: AuctionType = settings.auctionType || "CINEMA";
   const code = generateUniqueRoomCode(auctionType);
+  const defaultBudget = auctionType === "CRICKET" ? 150 : 100;
+  const startingBudget = Number(settings.startingBudget) > 0 ? Number(settings.startingBudget) : defaultBudget;
   const roomSettings: RoomSettings = {
     ...DEFAULT_ROOM_SETTINGS,
     auctionType,
+    startingBudget,
     totalMovies: 15,
     ...settings,
   };
@@ -455,18 +503,20 @@ export function addBotToRoom(roomCode: string): RoomState | null {
 
   const chosenBot = availableBots[Math.floor(Math.random() * availableBots.length)];
   if (!chosenBot) return room;
-  const botIndex = room.players.length;
+  const isCricket = room.auctionType === "CRICKET" || (room.roomCode || roomCode).toUpperCase().startsWith("IPL");
+  const startingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+  room.settings.startingBudget = startingBudget;
 
   const botPlayer: Player = {
     id: `bot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: chosenBot.name,
-    budget: room.settings.startingBudget,
-    initialBudget: room.settings.startingBudget,
+    budget: startingBudget,
+    initialBudget: startingBudget,
     movies: [],
     isHost: false,
     isBot: true,
     avatar: chosenBot.avatar,
-    color: AVATAR_COLORS[(botIndex + 1) % AVATAR_COLORS.length] || "#2563eb",
+    color: AVATAR_COLORS[(room.players.length + 1) % AVATAR_COLORS.length] || "#2563eb",
     ready: true,
   };
 
@@ -575,6 +625,24 @@ export function saveRoom(
       }
     }
 
+    // Ensure all players have budgets strictly consistent with room.settings.startingBudget
+    if (!room.settings) room.settings = { ...DEFAULT_ROOM_SETTINGS };
+    const isCricket = room.auctionType === "CRICKET" || (room.roomCode || "").toUpperCase().startsWith("IPL");
+    const startingBudget = Number(room.settings.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+    room.settings.startingBudget = startingBudget;
+    if (Array.isArray(room.players)) {
+      room.players.forEach((p) => {
+        if (!p.movies) p.movies = [];
+        p.initialBudget = startingBudget;
+        if (p.movies.length === 0) {
+          p.budget = startingBudget;
+        } else {
+          const spent = p.movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+          p.budget = Math.round((startingBudget - spent) * 100) / 100;
+        }
+      });
+    }
+
     localStorage.setItem(key, JSON.stringify(room));
 
     window.dispatchEvent(
@@ -655,9 +723,15 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
       room.settings = { ...DEFAULT_ROOM_SETTINGS };
     }
 
+    const isCricket = room.auctionType === "CRICKET" || code.startsWith("IPL");
+    const startingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
     // Deeply attach all crucial auction state properties to settings jsonb
     const richSettings: any = {
       ...room.settings,
+      startingBudget,
+      roundStartedAt: room.roundStartedAt,
+      auctionEndTime: room.auctionEndTime,
+      secondsRemaining: room.secondsRemaining,
       auctionType: room.auctionType || room.settings.auctionType || "CINEMA",
       submittedSlates: room.submittedSlates || room.settings.submittedSlates || {},
       portfolioRankings: room.portfolioRankings || room.settings.portfolioRankings,
@@ -665,6 +739,8 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
       isPaused: Boolean(room.isPaused),
       outPlayerIds: room.outPlayerIds || [],
       bidHistory: (room.bidHistory || []).slice(0, 50),
+      trades: room.trades || [],
+      kickedPlayerIds: room.kickedPlayerIds || [],
       version: room.version || 1,
     };
     room.settings = richSettings;
@@ -721,11 +797,17 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
         : room.players.filter((p) => p.id === currentUser.id);
 
       if (playersToUpsert.length > 0) {
+        const startingBudget = Number(room.settings?.startingBudget) || 100;
         const playerRows = playersToUpsert.map((p) => {
-          const rawBudget = Number(p.budget);
-          const validBudget = Number.isFinite(rawBudget) ? rawBudget : (Number(room.settings?.startingBudget) || 100);
-          const rawInit = Number(p.initialBudget);
-          const validInitialBudget = Number.isFinite(rawInit) ? rawInit : validBudget;
+          const movies = Array.isArray(p.movies) ? p.movies : [];
+          let validBudget: number;
+          if (movies.length === 0) {
+            validBudget = startingBudget;
+          } else {
+            const spent = movies.reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+            validBudget = Math.round((startingBudget - spent) * 100) / 100;
+          }
+          const validInitialBudget = startingBudget;
           const cleanName = (p.name || "Franchise Owner").trim().slice(0, 30) || "Franchise Owner";
           const cleanId = String(p.id || "").trim() || `user_${Date.now()}`;
 
@@ -741,13 +823,13 @@ export async function syncRoomToSupabase(room: RoomState): Promise<void> {
             is_host: Boolean(p.isHost),
             is_bot: Boolean(p.isBot),
             is_ready: Boolean(p.ready ?? true),
-            movies: Array.isArray(p.movies) ? p.movies : [],
+            movies: movies as any,
           };
         });
 
         const { error: pErr } = await supabase
           .from("room_players")
-          .upsert(playerRows, { onConflict: "id,room_code" });
+          .upsert(playerRows as any, { onConflict: "id,room_code" });
         if (pErr) {
           console.error("[Supabase Sync] Players upsert error:", pErr, "payload:", playerRows);
         }
@@ -820,18 +902,17 @@ export function getRoom(roomCode: string): RoomState | null {
           parsed.auctionType = parsed.settings?.auctionType || (cand.startsWith("IPL") ? "CRICKET" : "CINEMA");
         }
         if (Array.isArray(parsed.players)) {
-          const startingBudget = typeof parsed.settings?.startingBudget === "number" ? parsed.settings.startingBudget : 100;
+          if (!parsed.settings) parsed.settings = {};
+          const startingBudget = Number(parsed.settings?.startingBudget) > 0 ? Number(parsed.settings.startingBudget) : 100;
+          parsed.settings.startingBudget = startingBudget;
           parsed.players.forEach((p: any) => {
             if (!p.movies) p.movies = [];
-            if (typeof p.budget !== "number" || isNaN(p.budget)) {
+            p.initialBudget = startingBudget;
+            if (p.movies.length === 0) {
               p.budget = startingBudget;
             } else {
-              p.budget = Math.round(p.budget * 100) / 100;
-            }
-            if (typeof p.initialBudget !== "number" || isNaN(p.initialBudget)) {
-              p.initialBudget = startingBudget;
-            } else {
-              p.initialBudget = Math.round(p.initialBudget * 100) / 100;
+              const spent = p.movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+              p.budget = Math.round((startingBudget - spent) * 100) / 100;
             }
           });
         }
@@ -914,35 +995,27 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           .eq("room_code", canonicalCode)
           .order("joined_at", { ascending: true });
 
-        const { data: remoteMessages } = await supabase
-          .from("room_messages")
-          .select("*")
-          .eq("room_code", canonicalCode)
-          .order("created_at", { ascending: true })
-          .limit(100);
-
-        const { data: remoteBids } = await supabase
-          .from("room_bids")
-          .select("*")
-          .eq("room_code", canonicalCode)
-          .order("created_at", { ascending: false })
-          .limit(30);
-
         const settings = (remoteRoom.settings as unknown as RoomSettings) || DEFAULT_ROOM_SETTINGS;
-        const defaultStartingBudget = typeof settings.startingBudget === "number" ? settings.startingBudget : 100;
+        const isCricket = (settings as any)?.auctionType === "CRICKET" || canonicalCode.startsWith("IPL");
+        const defaultStartingBudget = Number(settings.startingBudget) > 0 ? Number(settings.startingBudget) : (isCricket ? 150 : 100);
+        settings.startingBudget = defaultStartingBudget;
 
         const mappedPlayers: Player[] = (remotePlayers || []).map((p: any) => {
-          const rawB = p.budget !== null && p.budget !== undefined ? Number(p.budget) : NaN;
-          const safeB = !isNaN(rawB) ? rawB : defaultStartingBudget;
-          const rawInit = p.initial_budget !== null && p.initial_budget !== undefined ? Number(p.initial_budget) : NaN;
-          const safeInit = !isNaN(rawInit) ? rawInit : safeB;
+          const movies = Array.isArray(p.movies) ? p.movies : [];
+          let safeB: number;
+          if (movies.length === 0) {
+            safeB = defaultStartingBudget;
+          } else {
+            const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+            safeB = defaultStartingBudget - spent;
+          }
 
           return {
             id: p.id,
             name: p.name,
             budget: Math.round(safeB * 100) / 100,
-            initialBudget: Math.round(safeInit * 100) / 100,
-            movies: Array.isArray(p.movies) ? p.movies : [],
+            initialBudget: defaultStartingBudget,
+            movies,
             isHost: Boolean(p.is_host),
             isBot: Boolean(p.is_bot),
             avatar: p.avatar || "CB",
@@ -951,41 +1024,12 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           };
         });
 
-        const mappedMessages: ChatMsg[] = (remoteMessages || []).map((m: any) => ({
-          id: m.id,
-          sender: m.player_name,
-          avatar: getInitials(m.player_name),
-          text: m.body,
-          timestamp: new Date(m.created_at).getTime(),
-          isSystem: m.player_name === "System" || m.player_name === "Auction Host",
-        }));
-
-        const mappedBids: BidRecord[] = (remoteBids || []).map((b: any) => ({
-          id: b.id,
-          playerId: b.player_id,
-          playerName: b.player_name,
-          amount: Math.round(Number(b.amount) * 100) / 100,
-          time: new Date(b.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        }));
-
         const local = getRoom(canonicalCode);
 
-        // Merge bid history
-        const mergedBids = [...mappedBids];
-        if (local?.bidHistory) {
-          for (const b of local.bidHistory) {
-            if (!mergedBids.some((mb) => mb.id === b.id || (mb.playerId === b.playerId && mb.amount === b.amount))) {
-              mergedBids.push(b);
-            }
-          }
-        }
-
-        // Merge chat messages
-        const chatMap = new Map<string, ChatMsg>();
-        mappedMessages.forEach((m) => chatMap.set(m.id, m));
-        if (local?.chatMessages) {
-          local.chatMessages.forEach((m) => chatMap.set(m.id, m));
-        }
+        // Authoritative bid history from richSettings
+        const mappedBids: BidRecord[] = Array.isArray((settings as any)?.bidHistory)
+          ? (settings as any).bidHistory
+          : (local?.bidHistory || []);
 
         // Merge players list
         const playerMap = new Map<string, Player>();
@@ -994,18 +1038,26 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           local.players.forEach((lp) => {
             const existing = playerMap.get(lp.id);
             if (!existing) {
-              playerMap.set(lp.id, lp);
+              const movies = Array.isArray(lp.movies) ? lp.movies : [];
+              const spent = movies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+              const budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+              playerMap.set(lp.id, {
+                ...lp,
+                budget,
+                initialBudget: defaultStartingBudget,
+                movies,
+              });
             } else {
-              if ((lp.movies?.length || 0) >= (existing.movies?.length || 0)) {
-                const mergedB = typeof lp.budget === "number" && !isNaN(lp.budget) ? lp.budget : existing.budget;
-                const mergedInit = typeof lp.initialBudget === "number" && !isNaN(lp.initialBudget) ? lp.initialBudget : existing.initialBudget;
-                playerMap.set(lp.id, {
-                  ...existing,
-                  ...lp,
-                  budget: Math.round(mergedB * 100) / 100,
-                  initialBudget: Math.round(mergedInit * 100) / 100,
-                });
-              }
+              const bestMovies = (lp.movies?.length || 0) >= (existing.movies?.length || 0) ? (lp.movies || []) : (existing.movies || []);
+              const spent = bestMovies.reduce((sum: number, m: any) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+              const budget = Math.round((defaultStartingBudget - spent) * 100) / 100;
+              playerMap.set(lp.id, {
+                ...existing,
+                ...lp,
+                budget,
+                initialBudget: defaultStartingBudget,
+                movies: bestMovies,
+              });
             }
           });
         }
@@ -1051,32 +1103,53 @@ export async function fetchRemoteRoom(roomCode: string): Promise<RoomState | nul
           ? (remoteRoom.movie_pool as unknown as Movie[])
           : (local?.moviePool && local.moviePool.length > 0 ? local.moviePool : defaultPool);
 
+        const remoteSec = typeof remoteRoom.seconds_remaining === "number" && remoteRoom.seconds_remaining > 0
+          ? remoteRoom.seconds_remaining
+          : (Number(settings.auctionSeconds) || 30);
+        const remoteEndTime = (settings as any)?.auctionEndTime;
+        const effectiveEndTime = (typeof remoteEndTime === "number" && remoteEndTime > Date.now())
+          ? remoteEndTime
+          : (remoteRoom.is_sold ? undefined : Date.now() + remoteSec * 1000);
+        const roundStartedAt = (settings as any)?.roundStartedAt || (local?.currentMovieIndex === remoteIndex ? local.roundStartedAt : Date.now());
+        const outPlayerIds = (local && local.currentMovieIndex === remoteIndex)
+          ? (local.outPlayerIds || [])
+          : (Array.isArray((settings as any)?.outPlayerIds) && (settings as any)?.currentMovieIndex === remoteIndex ? (settings as any).outPlayerIds : []);
+
+        const parsedTrades: TradeOffer[] = (settings as any)?.trades || (remoteRoom.settings as any)?.trades || local?.trades || [];
+        const parsedKicked: string[] = (settings as any)?.kickedPlayerIds || (remoteRoom.settings as any)?.kickedPlayerIds || local?.kickedPlayerIds || [];
+        const safeMergedPlayers = (mergedPlayers.length ? mergedPlayers : local?.players || []).filter((p) => !parsedKicked.includes(p.id));
+
         const parsedRoom: RoomState = {
           roomCode: canonicalCode,
           createdAt: new Date(remoteRoom.created_at).getTime(),
           settings: {
             ...settings,
             auctionType,
+            startingBudget: defaultStartingBudget,
           },
           hostId: remoteRoom.host_id,
           hostName: remoteRoom.host_name,
           status: remoteRoom.status as any,
-          players: mergedPlayers.length ? mergedPlayers : local?.players || [],
+          players: safeMergedPlayers,
           moviePool: resolvedPool,
           currentMovieIndex: remoteIndex,
           currentBid: finalBid,
           currentBidderId: finalBidderId,
           currentBidderName: finalBidderName,
-          secondsRemaining: remoteRoom.seconds_remaining,
+          secondsRemaining: remoteSec,
+          auctionEndTime: effectiveEndTime,
+          roundStartedAt,
           isSold: remoteRoom.is_sold,
-          bidHistory: mergedBids,
-          chatMessages: Array.from(chatMap.values()).sort((a, b) => a.timestamp - b.timestamp),
-          outPlayerIds: (settings as any)?.outPlayerIds || local?.outPlayerIds || [],
+          bidHistory: mappedBids,
+          chatMessages: local?.chatMessages || [],
+          outPlayerIds,
           auctionType,
           submittedSlates: (settings as any)?.submittedSlates || local?.submittedSlates || {},
           portfolioRankings: (settings as any)?.portfolioRankings || local?.portfolioRankings,
           isPaused: Boolean((settings as any)?.isPaused ?? local?.isPaused),
           tournamentData: (settings as any)?.tournamentData || local?.tournamentData,
+          trades: parsedTrades,
+          kickedPlayerIds: parsedKicked,
           version: Math.max(remoteVersion, (local?.version || 1)),
         };
 
@@ -1134,6 +1207,8 @@ export function subscribeToMultiplayerRoom(
 
   window.addEventListener("cinebid_room_update", handleLocalUpdate);
 
+  let lastPacketTimestamp = Date.now();
+
   // 1. In-App Server Relay SSE stream
   let eventSource: EventSource | null = null;
   try {
@@ -1144,6 +1219,7 @@ export function subscribeToMultiplayerRoom(
           const parsed = JSON.parse(event.data);
           const fresh = parsed.room as RoomState | undefined;
           if (fresh && fresh.roomCode?.toUpperCase() === code) {
+            lastPacketTimestamp = Date.now();
             const current = getRoom(code);
             if (isPacketNewer(current, fresh)) {
               saveRoom(fresh, true, false, true);
@@ -1159,8 +1235,13 @@ export function subscribeToMultiplayerRoom(
     // SSE not supported
   }
 
-  // 2. Periodic sync fallback (every 1.2s to guarantee synchronization even across network drops)
+  // 2. Intelligent Watchdog Sync:
+  // Industry multiplayer best practice: do NOT poll database continuously when WebSockets/SSE are healthy!
+  // Only check remote state every 8s if no real-time push has arrived in the last 6s.
   const pollInterval = window.setInterval(() => {
+    if (Date.now() - lastPacketTimestamp < 6000) {
+      return; // Skip poll when real-time traffic is flowing smoothly
+    }
     void fetchRemoteRoom(code).then((updated) => {
       if (updated) {
         const current = getRoom(code);
@@ -1170,7 +1251,7 @@ export function subscribeToMultiplayerRoom(
         }
       }
     });
-  }, 1200);
+  }, 8000);
 
   // 3. Supabase Realtime channel (if available)
   let channel: any = null;
@@ -1180,6 +1261,9 @@ export function subscribeToMultiplayerRoom(
     channel = supabase.channel(channelName);
 
     const debouncedFetchRemote = () => {
+      if (Date.now() - lastPacketTimestamp < 3500) {
+        return; // Ignore database notification if we already received authoritative push
+      }
       if (fetchDebounceTimer) window.clearTimeout(fetchDebounceTimer);
       fetchDebounceTimer = window.setTimeout(() => {
         void fetchRemoteRoom(code).then((updated) => {
@@ -1191,12 +1275,13 @@ export function subscribeToMultiplayerRoom(
             }
           }
         });
-      }, 1500);
+      }, 2500);
     };
 
     const handleIncomingBroadcast = (payload: any) => {
       const fresh = payload?.payload?.room as RoomState | undefined;
       if (!fresh || fresh.roomCode?.toUpperCase() !== code) return;
+      lastPacketTimestamp = Date.now();
       const current = getRoom(code);
       if (!isPacketNewer(current, fresh)) {
         return;
@@ -1268,20 +1353,23 @@ export function joinRoom(roomCode: string, playerName: string): RoomState {
 
   const user = setCurrentUser({ name: cleanName });
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
+  if (!room.settings) room.settings = { ...DEFAULT_ROOM_SETTINGS };
+  const isCricket = room.auctionType === "CRICKET" || (room.roomCode || roomCode).toUpperCase().startsWith("IPL");
+  const startingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+  room.settings.startingBudget = startingBudget;
 
   if (playerIndex >= 0 && room.players[playerIndex]) {
     room.players[playerIndex]!.name = user.name;
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
-    const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
-    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+    room.players[playerIndex]!.initialBudget = startingBudget;
+    if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
       room.players[playerIndex]!.budget = startingBudget;
-    }
-    if (typeof room.players[playerIndex]!.initialBudget !== "number" || isNaN(room.players[playerIndex]!.initialBudget)) {
-      room.players[playerIndex]!.initialBudget = startingBudget;
+    } else {
+      const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+      room.players[playerIndex]!.budget = Math.round((startingBudget - spent) * 100) / 100;
     }
   } else if (room.players.length < room.settings.maxPlayers) {
-    const startingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
     const newPlayer: Player = {
       id: user.id,
       name: user.name,
@@ -1331,13 +1419,22 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
   const user = setCurrentUser({ name: cleanName });
 
   const existingLocal = getRoom(primaryCode);
-  const defaultStartingBudget = typeof existingLocal?.settings?.startingBudget === "number" ? existingLocal.settings.startingBudget : 100;
+  let defaultStartingBudget = (existingLocal && Number(existingLocal.settings?.startingBudget) > 0) ? Number(existingLocal.settings.startingBudget) : undefined;
+
+  if (defaultStartingBudget === undefined) {
+    const remoteCheck = await fetchRemoteRoom(primaryCode).catch(() => null);
+    if (remoteCheck && Number(remoteCheck.settings?.startingBudget) > 0) {
+      defaultStartingBudget = Number(remoteCheck.settings.startingBudget);
+    }
+  }
+  const isCricketRoom = primaryCode.startsWith("IPL") || (existingLocal && existingLocal.auctionType === "CRICKET");
+  const startingBudget = defaultStartingBudget || (isCricketRoom ? 150 : 100);
 
   const playerPayload = {
     id: user.id,
     name: user.name,
-    budget: defaultStartingBudget,
-    initialBudget: defaultStartingBudget,
+    budget: startingBudget,
+    initialBudget: startingBudget,
     avatar: user.avatar,
     color: user.color,
     ready: true,
@@ -1408,6 +1505,11 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
     throw new Error(`Room "${primaryCode}" not found. Please verify the code or check if the host has created the room.`);
   }
 
+  // Check if player was kicked
+  if (Array.isArray(room.kickedPlayerIds) && room.kickedPlayerIds.includes(user.id)) {
+    throw new Error("You have been removed from this room by the host.");
+  }
+
   const canonicalCode = room.roomCode.toUpperCase();
   const maxPlayers = room.settings?.maxPlayers || 8;
   const isAlreadyIn = room.players.some((p) => p.id === user.id || p.name.toLowerCase() === user.name.toLowerCase());
@@ -1428,16 +1530,20 @@ export async function joinRoomAsync(roomCode: string, playerName: string): Promi
 
   const playerIndex = room.players.findIndex((p) => p.id === user.id);
 
-  const fallbackStartingBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+  const isCricket = room.auctionType === "CRICKET" || canonicalCode.startsWith("IPL");
+  const fallbackStartingBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricket ? 150 : 100);
+  if (!room.settings) room.settings = { ...DEFAULT_ROOM_SETTINGS };
+  room.settings.startingBudget = fallbackStartingBudget;
   if (playerIndex >= 0 && room.players[playerIndex]) {
     room.players[playerIndex]!.name = finalName;
     room.players[playerIndex]!.avatar = user.avatar;
     room.players[playerIndex]!.ready = true;
-    if (typeof room.players[playerIndex]!.budget !== "number" || isNaN(room.players[playerIndex]!.budget)) {
+    room.players[playerIndex]!.initialBudget = fallbackStartingBudget;
+    if ((room.players[playerIndex]!.movies?.length || 0) === 0) {
       room.players[playerIndex]!.budget = fallbackStartingBudget;
-    }
-    if (typeof room.players[playerIndex]!.initialBudget !== "number" || isNaN(room.players[playerIndex]!.initialBudget)) {
-      room.players[playerIndex]!.initialBudget = fallbackStartingBudget;
+    } else {
+      const spent = (room.players[playerIndex]!.movies || []).reduce((sum, m) => sum + (Number(m.purchasePrice) || Number(m.basePrice) || 0), 0);
+      room.players[playerIndex]!.budget = Math.round((fallbackStartingBudget - spent) * 100) / 100;
     }
   } else if (room.players.length < maxPlayers) {
     const newPlayer: Player = {
@@ -1609,12 +1715,26 @@ export function placeBid(
     }
   }
 
-  let newBid = isAbsolute ? amountOrIncrement : room.currentBid + amountOrIncrement;
+  const baseP = currentMovie?.basePrice ?? 1;
+  const isOpeningBid = room.currentBidderId === null;
+
+  let newBid: number;
+  if (isAbsolute) {
+    newBid = amountOrIncrement;
+  } else if (isOpeningBid) {
+    // If no bids placed yet on this item, an opening bid <= basePrice sets the bid to basePrice (never double!)
+    if (amountOrIncrement <= baseP) {
+      newBid = baseP;
+    } else {
+      newBid = room.currentBid + amountOrIncrement;
+    }
+  } else {
+    newBid = room.currentBid + amountOrIncrement;
+  }
   newBid = Math.round(newBid * 100) / 100;
 
   if (isCricket) {
-    const baseP = currentMovie?.basePrice ?? 1;
-    if (room.currentBidderId === null) {
+    if (isOpeningBid) {
       if (newBid < baseP) {
         return {
           success: false,
@@ -1632,12 +1752,13 @@ export function placeBid(
       }
     }
   } else {
-    if (newBid <= room.currentBid && room.currentBidderId !== null) {
+    if (newBid <= room.currentBid && !isOpeningBid) {
       return { success: false, message: "Bid must be higher than current bid." };
     }
   }
 
-  const defaultBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+  const isCricketRoom = isCricket || code.startsWith("IPL");
+  const defaultBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricketRoom ? 150 : 100);
   if (typeof player.budget !== "number" || isNaN(player.budget)) {
     player.budget = defaultBudget;
   }
@@ -1848,6 +1969,12 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
   if (!room) return null;
   if (room.isSold) return room;
 
+  // Protect against premature round expiry: round must have been active for at least 5 seconds before expiring with NO bids!
+  if (!room.currentBidderId && room.roundStartedAt && (Date.now() - room.roundStartedAt < 5000)) {
+    console.warn("[Auction] Ignored premature unsold resolution (< 5s since round start)");
+    return room;
+  }
+
   const currentMovie = room.moviePool[room.currentMovieIndex];
   if (!currentMovie) return room;
 
@@ -1858,12 +1985,11 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
       // Idempotency check: prevent duplicate acquisition or double deduction
       const alreadyWon = winner.movies.some((m) => m.id === currentMovie.id);
       if (!alreadyWon) {
-        const defaultBudget = typeof room.settings?.startingBudget === "number" ? room.settings.startingBudget : 100;
+        const isCricketRoom = room.auctionType === "CRICKET" || room.roomCode.toUpperCase().startsWith("IPL");
+        const defaultBudget = Number(room.settings?.startingBudget) > 0 ? Number(room.settings.startingBudget) : (isCricketRoom ? 150 : 100);
         const currentB = typeof winner.budget === "number" && !isNaN(winner.budget) ? winner.budget : defaultBudget;
         winner.budget = Math.round((currentB - room.currentBid) * 100) / 100;
-        if (typeof winner.initialBudget !== "number" || isNaN(winner.initialBudget)) {
-          winner.initialBudget = defaultBudget;
-        }
+        winner.initialBudget = defaultBudget;
         const wonMovie: OwnedMovie = {
           ...currentMovie,
           purchasePrice: Math.round(room.currentBid * 100) / 100,
@@ -1879,7 +2005,7 @@ export function resolveCurrentAuction(roomCode: string): RoomState | null {
   room.isSold = true;
   room.isPaused = false;
   room.auctionEndTime = undefined;
-  saveRoom(room, false, false, false, true);
+  saveRoom(room, false, true, false, false);
   void broadcastRoomState(room, "room_state");
   return room;
 }
@@ -1903,7 +2029,7 @@ export function togglePauseAuction(roomCode: string): RoomState | null {
   }
 
   bumpRoomVersion(room);
-  saveRoom(room, false, false, false, true);
+  saveRoom(room, false, true, false, false);
   void broadcastRoomState(room, "room_state");
   return room;
 }
@@ -1914,7 +2040,7 @@ export function saveTournamentState(roomCode: string, tournamentData: any): Room
   if (!room) return null;
   room.tournamentData = tournamentData;
   bumpRoomVersion(room);
-  saveRoom(room, false, false, false, true);
+  saveRoom(room, false, true, false, false);
   void broadcastRoomState(room, "room_state");
   return room;
 }
@@ -1937,18 +2063,21 @@ export function advanceToNextMovie(roomCode: string): RoomState | null {
   }
 
   const nextMovie = room.moviePool[nextIndex];
+  const auctionSeconds = Number(room.settings?.auctionSeconds) || 30;
+  const now = Date.now();
   room.currentMovieIndex = nextIndex;
   room.currentBid = nextMovie ? nextMovie.basePrice : 1;
   room.currentBidderId = null;
   room.currentBidderName = null;
-  room.secondsRemaining = room.settings.auctionSeconds;
-  room.auctionEndTime = Date.now() + room.settings.auctionSeconds * 1000;
+  room.secondsRemaining = auctionSeconds;
+  room.auctionEndTime = now + auctionSeconds * 1000;
+  room.roundStartedAt = now;
   room.isSold = false;
   room.bidHistory = [];
   room.outPlayerIds = []; // Reset "OUT" statuses for new item
 
   bumpRoomVersion(room);
-  saveRoom(room, false, false, false, true);
+  saveRoom(room, false, true, false, false);
   void broadcastRoomState(room, "round_advanced", { nextIndex });
   return room;
 }
@@ -2117,4 +2246,294 @@ export async function evaluateAllRoomPlayers(
   }
 
   return scores;
+}
+
+// -------------------------------------------------------------
+// 9. HOST KICK SYSTEM
+// -------------------------------------------------------------
+
+export async function syncPlayerKickedToRelay(roomCode: string, playerId: string): Promise<void> {
+  if (typeof window === "undefined" || !roomCode || !playerId) return;
+  try {
+    const code = roomCode.toUpperCase();
+    try {
+      await kickPlayerServerFn({ data: { roomCode: code, playerId } });
+      return;
+    } catch {
+      await fetch(`/api/rooms/${encodeURIComponent(code)}/kick`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerId }),
+      });
+    }
+  } catch {
+    // Non-blocking
+  }
+}
+
+/**
+ * Host kicks an unknown or abusive player from the room.
+ * Removes them from the players array, cancels active trades, and blacklists their ID.
+ */
+export function kickPlayerFromRoom(roomCode: string, targetPlayerId: string): RoomState | null {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return null;
+
+  const currentUser = getCurrentUser();
+  if (room.hostId !== currentUser.id) {
+    console.warn("[Kick] Only the host can remove players.");
+    return room;
+  }
+
+  if (targetPlayerId === room.hostId) {
+    console.warn("[Kick] Host cannot kick themselves.");
+    return room;
+  }
+
+  // Add target to kicked blacklist
+  room.kickedPlayerIds = Array.from(new Set([...(room.kickedPlayerIds || []), targetPlayerId]));
+
+  // If the kicked player held current high bid on live item, reset bid
+  if (room.currentBidderId === targetPlayerId) {
+    const currentItem = room.moviePool[room.currentMovieIndex];
+    room.currentBidderId = null;
+    room.currentBidderName = null;
+    room.currentBid = currentItem ? currentItem.basePrice : 1;
+  }
+
+  const targetPlayer = room.players.find((p) => p.id === targetPlayerId);
+  room.players = room.players.filter((p) => p.id !== targetPlayerId);
+
+  // Cancel any pending trades involving this player
+  if (room.trades) {
+    room.trades = room.trades.map((t) => {
+      if (t.status === "PENDING" && (t.fromPlayerId === targetPlayerId || t.toPlayerId === targetPlayerId)) {
+        return { ...t, status: "CANCELLED" as const };
+      }
+      return t;
+    });
+  }
+
+  bumpRoomVersion(room);
+  saveRoom(room, false, true, false, false);
+  void broadcastRoomState(room, "player_kicked", {
+    kickedPlayerId: targetPlayerId,
+    kickedPlayerName: targetPlayer?.name || "Player",
+  });
+
+  // Delete from Supabase room_players table
+  void supabase.from("room_players").delete().match({ id: targetPlayerId, room_code: code });
+
+  // Sync to relay memory
+  void syncPlayerKickedToRelay(code, targetPlayerId);
+
+  return room;
+}
+
+// -------------------------------------------------------------
+// 10. POST-AUCTION FRANCHISE TRADING SYSTEM
+// -------------------------------------------------------------
+
+/**
+ * Propose a player trade to another franchise with optional cash adjustment.
+ */
+export function proposeTrade(
+  roomCode: string,
+  fromPlayerId: string,
+  toPlayerId: string,
+  offeredMovieIds: string[],
+  requestedMovieIds: string[],
+  cashAdjustment = 0,
+): { success: boolean; room?: RoomState; message?: string } {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return { success: false, message: "Room not found" };
+
+  const fromPlayer = room.players.find((p) => p.id === fromPlayerId);
+  const toPlayer = room.players.find((p) => p.id === toPlayerId);
+  if (!fromPlayer || !toPlayer) return { success: false, message: "Franchise not found in room." };
+
+  if (offeredMovieIds.length === 0 && requestedMovieIds.length === 0) {
+    return { success: false, message: "You must offer or request at least one player." };
+  }
+
+  // Validate ownership
+  const fromOwnedIds = new Set(fromPlayer.movies.map((m) => m.id));
+  for (const id of offeredMovieIds) {
+    if (!fromOwnedIds.has(id)) {
+      return { success: false, message: "You no longer own one or more of the offered players." };
+    }
+  }
+
+  const toOwnedIds = new Set(toPlayer.movies.map((m) => m.id));
+  for (const id of requestedMovieIds) {
+    if (!toOwnedIds.has(id)) {
+      return { success: false, message: "The other franchise no longer owns one or more requested players." };
+    }
+  }
+
+  // Validate cash adjustment affordability
+  if (cashAdjustment > 0 && fromPlayer.budget < cashAdjustment) {
+    return { success: false, message: `Insufficient purse! You only have ${formatCr(fromPlayer.budget)} available.` };
+  }
+  if (cashAdjustment < 0 && toPlayer.budget < Math.abs(cashAdjustment)) {
+    return { success: false, message: `Recipient cannot afford ${formatCr(Math.abs(cashAdjustment))} cash request.` };
+  }
+
+  const offeredMovieTitles = fromPlayer.movies
+    .filter((m) => offeredMovieIds.includes(m.id))
+    .map((m) => m.title);
+  const requestedMovieTitles = toPlayer.movies
+    .filter((m) => requestedMovieIds.includes(m.id))
+    .map((m) => m.title);
+
+  const newTrade: TradeOffer = {
+    id: `trade_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    fromPlayerId,
+    fromPlayerName: fromPlayer.name,
+    toPlayerId,
+    toPlayerName: toPlayer.name,
+    offeredMovieIds,
+    offeredMovieTitles,
+    requestedMovieIds,
+    requestedMovieTitles,
+    cashAdjustment,
+    status: "PENDING",
+    createdAt: Date.now(),
+  };
+
+  room.trades = [...(room.trades || []), newTrade];
+  bumpRoomVersion(room);
+  saveRoom(room, false, true, false, false);
+  void broadcastRoomState(room, "trade_proposed", { trade: newTrade });
+
+  return { success: true, room };
+}
+
+/**
+ * Respond to an incoming trade offer (Accept or Reject).
+ * If accepted, atomically transfers the items and cash between the two franchises.
+ */
+export function respondToTrade(
+  roomCode: string,
+  tradeId: string,
+  accept: boolean,
+  responderId: string,
+): { success: boolean; room?: RoomState; message?: string } {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return { success: false, message: "Room not found" };
+
+  if (!room.trades) room.trades = [];
+  const trade = room.trades.find((t) => t.id === tradeId);
+  if (!trade) return { success: false, message: "Trade offer not found." };
+  if (trade.status !== "PENDING") {
+    return { success: false, message: `Trade is already ${trade.status.toLowerCase()}.` };
+  }
+
+  if (trade.toPlayerId !== responderId) {
+    return { success: false, message: "Only the recipient franchise can respond to this trade." };
+  }
+
+  if (!accept) {
+    trade.status = "REJECTED";
+    bumpRoomVersion(room);
+    saveRoom(room, false, true, false, false);
+    void broadcastRoomState(room, "trade_rejected", { tradeId });
+    return { success: true, room };
+  }
+
+  // ACCEPT: Atomic swap
+  const fromPlayer = room.players.find((p) => p.id === trade.fromPlayerId);
+  const toPlayer = room.players.find((p) => p.id === trade.toPlayerId);
+  if (!fromPlayer || !toPlayer) {
+    return { success: false, message: "One of the franchises is no longer in the room." };
+  }
+
+  // Re-verify ownership at moment of acceptance
+  const fromHasAll = trade.offeredMovieIds.every((id) => fromPlayer.movies.some((m) => m.id === id));
+  const toHasAll = trade.requestedMovieIds.every((id) => toPlayer.movies.some((m) => m.id === id));
+  if (!fromHasAll || !toHasAll) {
+    trade.status = "CANCELLED";
+    bumpRoomVersion(room);
+    saveRoom(room);
+    return { success: false, message: "Trade voided: one or more players were already traded." };
+  }
+
+  // Extract items
+  const itemsFromOffer = fromPlayer.movies.filter((m) => trade.offeredMovieIds.includes(m.id));
+  const itemsFromRequest = toPlayer.movies.filter((m) => trade.requestedMovieIds.includes(m.id));
+
+  // Remove traded items from current owners
+  fromPlayer.movies = fromPlayer.movies.filter((m) => !trade.offeredMovieIds.includes(m.id));
+  toPlayer.movies = toPlayer.movies.filter((m) => !trade.requestedMovieIds.includes(m.id));
+
+  // Re-assign ownership
+  const transferredToRecipient: OwnedMovie[] = itemsFromOffer.map((m) => ({
+    ...m,
+    purchasedBy: toPlayer.id,
+    purchasedByName: toPlayer.name,
+  }));
+  const transferredToProposer: OwnedMovie[] = itemsFromRequest.map((m) => ({
+    ...m,
+    purchasedBy: fromPlayer.id,
+    purchasedByName: fromPlayer.name,
+  }));
+
+  toPlayer.movies.push(...transferredToRecipient);
+  fromPlayer.movies.push(...transferredToProposer);
+
+  // Cash adjustment
+  const cash = trade.cashAdjustment || 0;
+  fromPlayer.budget = Math.round((fromPlayer.budget - cash) * 100) / 100;
+  toPlayer.budget = Math.round((toPlayer.budget + cash) * 100) / 100;
+
+  trade.status = "ACCEPTED";
+
+  // Auto-cancel any conflicting pending trades
+  const tradedItemIds = new Set([...trade.offeredMovieIds, ...trade.requestedMovieIds]);
+  room.trades.forEach((t) => {
+    if (t.id !== tradeId && t.status === "PENDING") {
+      const overlaps =
+        t.offeredMovieIds.some((id) => tradedItemIds.has(id)) ||
+        t.requestedMovieIds.some((id) => tradedItemIds.has(id));
+      if (overlaps) {
+        t.status = "CANCELLED";
+      }
+    }
+  });
+
+  bumpRoomVersion(room);
+  saveRoom(room, false, true, false, false);
+  void broadcastRoomState(room, "trade_completed", { trade, fromPlayer, toPlayer });
+
+  return { success: true, room };
+}
+
+/**
+ * Cancel an outgoing pending trade offer.
+ */
+export function cancelTradeOffer(
+  roomCode: string,
+  tradeId: string,
+  userId: string,
+): { success: boolean; room?: RoomState; message?: string } {
+  const code = roomCode.toUpperCase();
+  const room = getRoom(code);
+  if (!room) return { success: false, message: "Room not found" };
+
+  if (!room.trades) room.trades = [];
+  const trade = room.trades.find((t) => t.id === tradeId);
+  if (!trade) return { success: false, message: "Trade offer not found" };
+
+  if (trade.fromPlayerId !== userId && room.hostId !== userId) {
+    return { success: false, message: "Only the proposer or host can cancel this offer." };
+  }
+
+  trade.status = "CANCELLED";
+  bumpRoomVersion(room);
+  saveRoom(room, false, true, false, false);
+  void broadcastRoomState(room, "trade_cancelled", { tradeId });
+  return { success: true, room };
 }

@@ -1234,7 +1234,7 @@ export const cricketPlayers: CricketPlayerItem[] = [
     countryFlag: "🇦🇫",
     stats: { matches: 23, wickets: 24, economy: 7.9, bestBowling: "3/37" },
     signatureSkill: "Quick Turning Chinaman & Flipper",
-  },,
+  },
   {
     id: "rajat-patidar",
     title: "Rajat Patidar",

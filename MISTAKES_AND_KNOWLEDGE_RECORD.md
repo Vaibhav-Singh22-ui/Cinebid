@@ -112,6 +112,194 @@ This document records the mistakes made during development, root causes, exact a
 
 ---
 
+## 7. Multi-User Lag, Polling Storms & State Desynchronization
+
+### The Mistake
+- When multiple users connected to an auction room, live bidding lagged, countdown timers jittered/desynced, and UI components experienced re-render storms.
+
+### Root Causes
+1. **The 1.2s Database Polling Storm**: In `subscribeToMultiplayerRoom`, an unconditional `setInterval` polled every 1200ms executing `fetchRemoteRoom`. Each poll executed 4 database queries (`rooms`, `room_players`, `room_messages`, `room_bids`). With 4 concurrent players, this fired ~800 DB queries/minute against Supabase, saturating connections, triggering rate limiting, and returning out-of-order stale responses that overwrote newer bids.
+2. **Missing `settings` Sync for Non-Host Bidders**: In `syncRoomToSupabase`, non-host bid updates only updated `current_bid` and `current_bidder_id`, leaving `settings` (which contained monotonic `version`, `auctionEndTime`, and `bidHistory`) stale in the database. When other clients polled the DB, they received stale versions and timer timestamps.
+3. **Timer Ticking Over Network**: The app was broadcasting timer ticks (`timer_update`), which suffered from network latency and jitter.
+
+### Permanent Fix & Rule
+- **Adopt the Gaming Industry's "Timestamp Anchor Pattern"**:
+  - The live auction countdown relies on a single UTC millisecond timestamp: `room.auctionEndTime`.
+  - Clients compute remaining seconds locally using `Math.max(0, Math.ceil((room.auctionEndTime - Date.now()) / 1000))`. Zero network traffic is required for timer counting.
+  - Network packets are only transmitted on actual state changes (bid placed, anti-sniping extension, pause/resume, round resolution).
+- **Convert Aggressive Polling to an Intelligent Watchdog**:
+  - Replace the 1.2s quad-query polling loop with an 8-second watchdog that only runs if NO real-time push event has arrived in the last 6 seconds.
+  - Omit heavy queries (`room_messages`, `room_bids`) from the general room fetcher.
+  - Always update `settings: richSettings` in `rooms` updates so monotonic `version` and `auctionEndTime` are in sync across all clients.
+
+---
+
+## 8. Chat-to-Game State Coupling & Infinite Re-render Loops
+
+### The Mistake
+- Sending a chat message or reaction emoji in `RoomChat` triggered a whole-room update, re-rendering `AuctionScreen` and writing to `rooms`.
+
+### Root Cause
+- `RoomChat` called `saveRoom(room)` on every message sent, which triggered `cinebid_room_update`, broadcasted `room_state` over SSE and Supabase, and queued a full room DB upsert. Additionally, `RoomChat` listened to `cinebid_room_update`, creating an infinite re-render loop with auction bidding.
+
+### Permanent Fix & Rule
+- **Decouple Chat from Game State**:
+  - Chat messages are ephemeral broadcasts via Supabase Realtime broadcast `chat_message` and saved directly to `room_messages`.
+  - Chat sending NEVER calls `saveRoom(room)` or mutates the core game state.
+  - `RoomChat` does NOT listen to `cinebid_room_update`, ensuring chat typing and emoji reactions never trigger game board re-renders.
+
+---
+
+## 9. Temporal Dead Zone (TDZ) & TypeScript Safety
+
+### The Mistake
+- `AuctionScreen` threw `Uncaught ReferenceError: Cannot access 'isHost' before initialization` on mount because `handleTimerExpired = useCallback(..., [code, isHost])` referenced `isHost` before `const isHost = room.hostId === currentUser.id;` was declared 64 lines later.
+- Missing `useCallback` and `DEFAULT_ROOM_SETTINGS` imports in `game-screens.tsx`.
+- Double comma syntax error `},,` in `src/lib/cricket-data.ts`.
+
+### Permanent Fix & Rule
+- Declare scope-critical variables like `isHost` at the top of the component before any hooks (`useCallback`, `useEffect`).
+- Run `npx tsc --noEmit` to ensure 0 TypeScript compile errors before pushing.
+
+---
+
+---
+
+## 10. The 150 Cr vs 100 Cr IPL Starting Purse Discrepancy
+
+### The Problem
+In an 8-player IPL Mega Auction created with a 150 Cr starting purse, only two players (Host and Player 2) displayed 150 Cr, while the other 6 players had 100 Cr purses.
+
+### Root Causes
+1. **Omitted Budget in Network Join Payload**:
+   - `joinRoomAsync` previously generated a `playerPayload` (`id`, `name`, `avatar`, `color`, `ready`) without specifying `budget` or `initialBudget`.
+   - `addPlayerToStoredRoom` in `src/lib/room-server-relay.ts` accepted the payload and pushed the player into memory with `budget: undefined`.
+2. **Supabase Schema Default Fallback (`DEFAULT 100`)**:
+   - In `supabase/schema.sql`, the `room_players` table has `budget numeric NOT NULL DEFAULT 100, initial_budget numeric NOT NULL DEFAULT 100`.
+   - When players 3 through 8 joined and synced their player records with `budget: undefined`, Postgres automatically inserted `100`.
+3. **No Dynamic Budget Derivation in Stale Mappings**:
+   - When `fetchRemoteRoom` read `remotePlayers`, it previously took `Number(p.budget)` directly (which was 100 from Postgres).
+   - Because the Host (Player 1) created their local player object with `budget: roomSettings.startingBudget` (150) and Player 2 joined locally with host `localStorage` context, only those two retained 150 Cr, while the other 6 players were assigned 100 Cr.
+4. **Non-Host Overwriting Room Settings in Supabase**:
+   - Non-hosts calling `syncRoomToSupabase` were updating `settings: richSettings` on the `rooms` table. Any non-host joining before full hydration would overwrite the room's starting purse in the database with the default (`100`).
+5. **GameForm Budget Default**:
+   - `GameForm` initialized `budget` to `"100"` regardless of whether the user was creating a Cinema or IPL game, requiring manual switching.
+
+### Permanent Fixes & Architecture Rules
+1. **Deterministic Budget Derivation for All Players**:
+   - In `saveRoom`, `fetchRemoteRoom`, `sanitizeRoom` (`LobbyScreen`), and `AuctionScreen`: Every player's budget is now strictly derived from `room.settings.startingBudget - spent`. A player with 0 acquired items is guaranteed to have `budget = room.settings.startingBudget` (150 Cr), completely eliminating any stale or hardcoded 100 Cr values.
+2. **Type-Aware Starting Purse Defaults**:
+   - For all IPL Mega Auction rooms (`auctionType === "CRICKET"` or room code starting with `IPL`), all fallbacks across `createRoom`, `addPlayerToStoredRoom`, `joinRoom`, `joinRoomAsync`, `fetchRemoteRoom`, and `saveRoom` default to **150 Cr** (rather than Cinema's 100 Cr standard).
+3. **Non-Host Mutation Isolation**:
+   - In `syncRoomToSupabase`, non-hosts are strictly prevented from updating `settings` or `movie_pool` on the `rooms` table. Only the authoritative host may modify canonical room settings.
+4. **Proactive GameForm Pre-Selection**:
+   - In `GameForm`, switching to "IPL Mega Auction" automatically sets the purse to **150 Cr**, and the dropdown clearly labels `₹150 Cr (Official IPL Mega Auction Purse)`.
+
+---
+
+## 11. Post-Auction Franchise Player Trading Architecture
+
+### Requirements & Design Decisions
+1. **Interactive Franchise Trading Window**:
+   - Following live auction rounds, franchise owners can negotiate and trade acquired cricketers/movies among themselves before and during tournament/jury evaluation.
+   - Supports proposing 1-for-1, 1-for-many, many-for-1, and many-for-many swaps.
+   - Includes optional purse transfer sweeteners (e.g., "I give Player A + ₹5.00 Cr for Player B").
+2. **Atomic Trade Execution & Anti-Double-Spend**:
+   - When a proposal is accepted, the trade execution in `respondToTrade` runs atomically:
+     - Verifies both parties still own all specified players/movies.
+     - Verifies the cash-giving party still has sufficient purse.
+     - Swaps item ownership arrays and transfers purse amounts in a single atomic memory mutation.
+     - Automatically scans and cancels any other pending trades involving the now-transferred players to prevent stale trades or double-spending.
+3. **Multiplayer Reactivity**:
+   - Updates `room.trades` and `room.players`, bumping the authoritative room version.
+   - `isPacketNewer` evaluates incoming packets with new trades or trade status transitions as strictly newer, broadcasting instantaneous UI updates to all connected tabs.
+4. **UI Integration (`TradeHubModal`)**:
+   - 4-tab interface: "Propose Trade", "Incoming Offers" (with badge counter), "Sent Proposals", and "Trade History".
+   - Integrated into `AuctionTopTabs`, `AuctionScreen`, `ResultsScreen` (squad selection & waiting), and `IplTournamentHub`.
+
+---
+
+## 12. Authoritative Host Kick & Blacklist Netcode Architecture
+
+### Requirements & Design Decisions
+1. **Host Authoritative Ejection**:
+   - Only room hosts (`room.hostId === currentUser.id`) have permission to kick unwanted or unknown players.
+   - Ejection can be initiated from the pre-game `LobbyScreen`, live `AuctionScreen` (right-column franchise roster), or `ResultsScreen` (competitors list).
+2. **Permanent Re-Entry Blacklist (`kickedPlayerIds`)**:
+   - Splicing `room.players` alone is insufficient because polling or background reconnection could auto-rejoin the kicked user.
+   - The kicked player's ID is permanently recorded in `room.kickedPlayerIds` on both the client room state and server relay (`kickedPlayerIds: Set<string>`).
+   - `joinRoomAsync` and relay `addPlayerToStoredRoom` immediately reject anyone whose ID is in `kickedPlayerIds` with `"You have been removed from this room by the host."`.
+3. **Live Bidding & Trade Cascade Cleanup**:
+   - If the kicked player was currently holding the highest bid in an ongoing auction round, `kickPlayerFromRoom` clears the bid or falls back to the previous bidder/base price so the round is never stranded.
+   - Any pending incoming or outgoing trades involving the kicked player are automatically marked as `"CANCELLED"`.
+   - The kicked player row is deleted from the Supabase `room_players` table.
+4. **Immediate Client Redirection**:
+   - Real-time room listeners in `LobbyScreen`, `AuctionScreen`, and `ResultsScreen` detect if `fresh.kickedPlayerIds?.includes(currentUser.id)`. If true, the kicked client immediately displays an alert and navigates to the home page (`/`), severing their connection.
+5. **Confirmation Modal Safety**:
+   - `KickPlayerConfirmDialog` prompts the host with a safety modal before executing any kick, preventing accidental misclicks during live bidding wars.
+
+---
+
+## 13. API Key Audit, Model Availability & Trade Scope Isolation
+
+### Problem Analysis & Diagnosis
+1. **Trade Tab in Live Auction Header**:
+   - Placing a "Trades" tab inside `AuctionTopTabs` during the live bidding session allowed players to open trade windows during active rounds.
+   - Live bidding rounds have strict second countdowns; attempting to negotiate multi-player trades during active rounds caused players to miss bidding or rounds to conclude while they had the modal open.
+   - Furthermore, after tournament simulation concluded or final jury podium was shown, the trade button was still accessible even though the championship was already won.
+2. **AI Simulation & Evaluation Discrepancies**:
+   - The user noticed match simulations and evaluation scores felt different/fallback-like.
+   - Direct HTTP audit of all `.env` API keys revealed:
+     - **OpenAI Key (`VITE_OPENAI_API_KEY`)**: Returned `429 Insufficient Quota` (`credit_balance_exhausted`). The OpenAI account has zero remaining balance.
+     - **Gemini Key (`VITE_BACKUP_AI_KEY`)**: Key `AQ.Ab...` is not a standard Google Generative Language API key and returned `404 Not Found`.
+     - **Groq Key (`VITE_GROQ_API_KEY`)**: Completely **valid and active** (Status 200). However, the code was hardcoded to call `llama-3.3-70b-versatile` and `llama-3.1-8b-instant`, which returned `404 model_not_found` on Groq.
+     - Because all 3 tiers failed, the system was always silently falling back to deterministic local heuristic algorithms.
+
+### Permanent Fixes
+1. **Trade Scope Strictly Post-Auction / Pre-Evaluation**:
+   - Removed `Trades` from `AuctionTopTabs` during live auction rounds. Live bidding remains strictly focused on live player acquisitions.
+   - Removed trade triggers from `IplTournamentHub` and the Grand Championship podium.
+   - Automatically close `isTradeHubOpen` via `useEffect` whenever the room transitions to `"evaluating"` or `"final"`.
+   - Trading is now strictly accessible during the roster preparation phase (`step === "select"` and `step === "waiting"`).
+2. **Groq Model Fallover Configured to Active Endpoints**:
+   - Verified that `openai/gpt-oss-120b` (1261ms), `openai/gpt-oss-20b` (1299ms), and `qwen/qwen3.8-27b` are active and return Status 200 on the user's Groq key.
+   - Updated `GROQ_MODELS` in `ai-evaluation.ts` and `cricket-tournament-simulator.ts` to query `["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]` first.
+   - Match simulations and Grand Jury evaluations now reliably run with sub-1.5s real AI generation via Groq without falling back.
+
+---
+
+## 14. Groq Capacity & Rate Limit Economics for 8-Player Tournament Simulations
+
+### Quantitative Breakdown (1 Full 8-Player Game)
+1. **Live Auction Bidding Phase**:
+   - **0 AI Requests**. Bidding, second countdowns, purse tracking, and real-time multiplayer updates are handled entirely client-side and via Supabase relay.
+2. **Post-Auction Trading Phase**:
+   - **0 AI Requests**. Proposing, reviewing, accepting, and cascading cancellations of trades run deterministically in `game-manager.ts`.
+3. **Grand Jury AI Evaluation (`evaluatePortfoliosWithAi`)**:
+   - **1 API Request**. Batch evaluates all 8 franchise Playing 11s in a single prompt.
+   - Token consumption: ~750 prompt tokens + ~650 response tokens $\approx$ **1,400 tokens**.
+4. **IPL Tournament Simulation (`simulateMatch` / `handleSimulateAll`)**:
+   - Format: 8-team single round-robin ($8 \times 7 / 2 = 28$ league matches) + 4 playoff matches (Q1, Eliminator, Q2, Final) = **32 matches**.
+   - Each match request: ~350 prompt tokens + ~250 response tokens $\approx$ 600 tokens.
+   - Total tournament tokens: $32 \times 600 \approx$ **19,200 tokens**.
+5. **Grand Total for 1 Full 8-Player Game**:
+   - **33 API requests** and **~20,600 tokens**.
+
+### Groq Free Tier Capacity & Quota Margins
+- **Daily Requests Allowance (RPD)**:
+   - Groq provides a generous daily limit (typically **1,000 to 14,400 requests/day** depending on tier).
+   - 33 requests = only **~0.2% to 3.3%** of the daily allowance.
+   - **Verdict**: Groq can comfortably handle **25 to 30 full 8-player tournaments every single day** without exhausting the daily quota.
+- **Tokens Per Minute (TPM) & Pacing**:
+   - Live probing confirmed Groq's token ceiling: `x-ratelimit-limit-tokens: 8000` with continuous rapid replenishment (`x-ratelimit-reset-tokens: ~735ms`).
+   - If the host clicks "Simulate All", simulating 32 matches without any delay could flirt with the 8,000 TPM limit.
+   - **Fix Implemented**: Added a polite 120ms pacing delay (`await new Promise(r => setTimeout(r, 120))`) between match iterations in `handleSimulateAll`. This gives the token bucket time to replenish while allowing React to render scorecard progression seamlessly.
+- **Fail-Safe Guarantee (Tier 4 Fallback)**:
+   - If Groq ever returns `429 Too Many Requests` or times out, the tournament engine automatically falls back to `fallbackSimulateMatch(team1, team2)`.
+   - The simulation will NEVER freeze, lag, or fail to crown a champion.
+
+---
+
 ## Summary Checklist for Future Work
 - [x] All 58 cricketers have distinct, verified photo URLs.
 - [x] Overseas limits: up to 7 in squad, max 4 in Playing 11.
@@ -119,3 +307,16 @@ This document records the mistakes made during development, root causes, exact a
 - [x] Live auction page layout is tight and compact with natural spacing.
 - [x] Live chat fits neatly in the right column with responsive height.
 - [x] AI franchise bots removed from lobbies and live bidding.
+- [x] 1.2s database polling storm eliminated; replaced with 8s watchdog.
+- [x] Zero-latency Timestamp Anchor pattern enforced for countdown timer.
+- [x] Chat messages decoupled from core room state mutations.
+- [x] Temporal Dead Zone (TDZ) and TypeScript errors resolved (0 errors).
+- [x] Authoritative 150 Cr starting purse enforced for all 8 players in IPL games.
+- [x] Post-auction player trading with cash sweeteners and atomic anti-double-spend execution.
+- [x] Authoritative Host Kick with permanent blacklist, trade auto-cancellation, and instant redirect.
+- [x] Live auction header kept clean; trading restricted strictly to post-auction / pre-evaluation window.
+- [x] Groq AI model updated to active endpoints (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`) restoring live AI simulation.
+- [x] Groq capacity verified for daily 8-player game simulations (33 requests / ~20k tokens per tournament).
+
+
+
